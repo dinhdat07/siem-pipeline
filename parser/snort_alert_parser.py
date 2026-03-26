@@ -1,35 +1,58 @@
-import re
-import json
 import argparse
-from pathlib import Path
+import json
+import re
 from datetime import datetime
-from tqdm import tqdm
+from pathlib import Path
 
-RULE_RE = re.compile(r'^\[\*\*\] \[(\d+):(\d+):(\d+)\] (.+) \[\*\*\]$')
-CLASS_RE = re.compile(r'^\[Classification: (.+?)\] \[Priority: (\d+)\]\s*$')
+RULE_RE = re.compile(r"^\[\*\*\] \[(\d+):(\d+):(\d+)\] (.+) \[\*\*\]$")
+CLASS_RE = re.compile(r"^\[Classification: (.+?)\] \[Priority: (\d+)\]\s*$")
 IP_RE = re.compile(
-    r'^(\d{2}/\d{2})-(\d{2}:\d{2}:\d{2}\.\d{6}) '
-    r'(\d+\.\d+\.\d+\.\d+):(\d+) -> (\d+\.\d+\.\d+\.\d+):(\d+)$'
+    r"^(\d{2}/\d{2})-(\d{2}:\d{2}:\d{2}\.\d{6}) "
+    r"(\d+\.\d+\.\d+\.\d+):(\d+) -> (\d+\.\d+\.\d+\.\d+):(\d+)$"
 )
 PROTO_RE = re.compile(
-    r'^(TCP|UDP|ICMP)\s+TTL:(\d+)\s+TOS:(\S+)\s+ID:(\d+)\s+IpLen:(\d+)\s+DgmLen:(\d+)(?:\s+(.*))?$'
+    r"^(TCP|UDP|ICMP)\s+TTL:(\d+)\s+TOS:(\S+)\s+ID:(\d+)\s+IpLen:(\d+)\s+DgmLen:(\d+)(?:\s+(.*))?$"
 )
 TCP_RE = re.compile(
-    r'^(\S+)\s+Seq:\s+(0x[0-9A-Fa-f]+)\s+Ack:\s+(0x[0-9A-Fa-f]+)\s+Win:\s+(0x[0-9A-Fa-f]+)\s+TcpLen:\s+(\d+)$'
+    r"^(\S+)\s+Seq:\s+(0x[0-9A-Fa-f]+)\s+Ack:\s+(0x[0-9A-Fa-f]+)\s+Win:\s+(0x[0-9A-Fa-f]+)\s+TcpLen:\s+(\d+)$"
 )
-XREF_RE = re.compile(r'^\[Xref => (.+?)\]$')
+XREF_RE = re.compile(r"^\[Xref => (.+?)\]$")
 
 YEAR = 2012
+SNORT_GLOB = "alert.full.maccdc2012_*.pcap"
+
+
+def parse_event_datetime(mmdd: str, time_str: str) -> datetime:
+    return datetime.strptime(f"{YEAR}/{mmdd} {time_str}", "%Y/%m/%d %H:%M:%S.%f")
 
 
 def parse_timestamp(mmdd: str, time_str: str) -> str:
-    dt = datetime.strptime(f"{YEAR}/{mmdd} {time_str}", "%Y/%m/%d %H:%M:%S.%f")
-    return dt.isoformat()
+    return parse_event_datetime(mmdd, time_str).isoformat()
 
 
-def split_blocks(text: str) -> list[str]:
-    text = text.replace("\r\n", "\n")
-    return [b.strip() for b in re.split(r'\n\s*\n+', text) if b.strip()]
+def iter_input_files(input_dir: Path):
+    files = sorted(input_dir.glob(SNORT_GLOB))
+    if not files:
+        raise FileNotFoundError(f"No input files found in {input_dir}")
+    yield from files
+
+
+def iter_blocks_in_file(input_path: Path):
+    block_lines: list[str] = []
+
+    with input_path.open("r", encoding="utf-8", errors="replace") as fin:
+        for raw_line in fin:
+            line = raw_line.rstrip("\r\n")
+            if line.strip():
+                block_lines.append(line)
+                continue
+
+            if block_lines:
+                yield "\n".join(block_lines)
+                block_lines = []
+
+    if block_lines:
+        yield "\n".join(block_lines)
 
 
 def parse_block(block: str) -> dict | None:
@@ -39,6 +62,8 @@ def parse_block(block: str) -> dict | None:
 
     event = {
         "event.kind": "alert",
+        "event.category": ["intrusion_detection"],
+        "event.type": ["info"],
         "event.module": "snort",
         "event.dataset": "snort.alert",
         "event.original": block,
@@ -79,6 +104,7 @@ def parse_block(block: str) -> dict | None:
     event["source.port"] = int(src_port)
     event["destination.ip"] = dst_ip
     event["destination.port"] = int(dst_port)
+    event["related.ip"] = [src_ip, dst_ip]
     idx += 1
 
     if idx < len(lines):
@@ -117,49 +143,38 @@ def parse_block(block: str) -> dict | None:
     return event
 
 
-def count_blocks_in_file(input_path: Path) -> int:
-    text = input_path.read_text(encoding="utf-8", errors="replace")
-    return len(split_blocks(text))
+def build_event_key(event: dict) -> str:
+    parts = [
+        event.get("rule.id"),
+        event.get("@timestamp"),
+        event.get("source.ip"),
+        event.get("source.port"),
+        event.get("destination.ip"),
+        event.get("destination.port"),
+    ]
+    return "|".join(str(part) for part in parts if part is not None)
 
 
-def parse_files(input_dir: Path, output_path: Path, limit: int | None = None) -> tuple[int, int]:
-    files = sorted(input_dir.glob("alert.full.maccdc2012_*.pcap"))
-    if not files:
-        raise FileNotFoundError(f"No input files found in {input_dir}")
-
+def parse_files_to_jsonl(input_dir: Path, output_path: Path, limit: int | None = None):
     output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    total_blocks = sum(count_blocks_in_file(file) for file in files)
-    progress_total = min(total_blocks, limit) if limit is not None else total_blocks
 
     parsed = 0
     failed = 0
 
-    with output_path.open("w", encoding="utf-8") as fout, \
-         tqdm(total=progress_total, desc="Parsing snort alerts", unit="event") as pbar:
-
-        for input_file in files:
-            if limit is not None and parsed >= limit:
-                break
-
-            text = input_file.read_text(encoding="utf-8", errors="replace")
-            blocks = split_blocks(text)
-
-            for block in blocks:
+    with output_path.open("w", encoding="utf-8") as fout:
+        for input_file in iter_input_files(input_dir):
+            for block in iter_blocks_in_file(input_file):
                 if limit is not None and parsed >= limit:
-                    break
+                    return parsed, failed
 
                 event = parse_block(block)
                 if event is None:
                     failed += 1
-                    pbar.set_postfix(parsed=parsed, failed=failed, file=input_file.name)
                     continue
 
                 event["log.file.path"] = str(input_file)
                 fout.write(json.dumps(event, ensure_ascii=False) + "\n")
                 parsed += 1
-                pbar.update(1)
-                pbar.set_postfix(parsed=parsed, failed=failed, file=input_file.name)
 
     return parsed, failed
 
@@ -170,14 +185,14 @@ def main():
         "-i",
         "--input-dir",
         type=Path,
-        default=Path("input/snort-alert"),
+        default=Path("data/raw/snort-alert"),
         help="Directory containing Snort alert files",
     )
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
-        default=Path("output/snort-alerts/snort_alerts_sample.jsonl"),
+        default=Path("data/sample/snort-alerts/snort_alerts_sample.jsonl"),
         help="Output JSONL file path",
     )
     parser.add_argument(
@@ -190,7 +205,7 @@ def main():
 
     args = parser.parse_args()
 
-    parsed, failed = parse_files(args.input_dir, args.output, args.limit)
+    parsed, failed = parse_files_to_jsonl(args.input_dir, args.output, args.limit)
 
     print(f"input_dir={args.input_dir}")
     print(f"output={args.output}")

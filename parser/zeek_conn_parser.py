@@ -1,8 +1,7 @@
-import json
 import argparse
+import json
 from pathlib import Path
 from datetime import datetime, timezone
-from tqdm import tqdm
 
 FIELDS = [
     "ts",
@@ -46,11 +45,25 @@ def parse_zeek_value(field: str, value: str):
         "resp_ip_bytes",
     }
     float_fields = {"ts", "duration"}
+    bool_fields = {"local_orig"}
 
     if field in int_fields:
         return int(value)
     if field in float_fields:
         return float(value)
+    if field in bool_fields:
+        if value in ("T", "true", "True"):
+            return True
+        if value in ("F", "false", "False"):
+            return False
+        return None
+
+    # Zeek tunnel_parents sometimes appears like [] or comma-separated values
+    if field == "tunnel_parents":
+        if value in ("[]", "(empty)"):
+            return []
+        return [v for v in value.split(",") if v]
+
     return value
 
 
@@ -93,7 +106,7 @@ def build_event(raw: dict) -> dict:
         "zeek.conn.history": raw.get("history"),
         "zeek.conn.missed_bytes": raw.get("missed_bytes"),
         "zeek.conn.local_orig": raw.get("local_orig"),
-        "zeek.conn.tunnel_parents": raw.get("tunnel_parents"),
+        "zeek.conn.tunnel_parents": raw.get("tunnel_parents") or [],
         "related.ip": [ip for ip in [raw.get("id.orig_h"), raw.get("id.resp_h")] if ip],
         "event.original": " ".join(str(raw.get(f, "-")) for f in FIELDS),
     }
@@ -116,31 +129,27 @@ def parse_conn_line(line: str) -> dict:
     raw = {}
     for field, value in zip(FIELDS, parts):
         raw[field] = parse_zeek_value(field, value)
+
     return build_event(raw)
 
 
-def count_data_lines(input_path: Path) -> int:
-    count = 0
+def iter_conn_events(input_path: Path):
     with input_path.open("r", encoding="utf-8", errors="replace") as fin:
-        for line in fin:
+        for line_no, line in enumerate(fin, start=1):
             line = line.strip()
-            if line and not line.startswith("#"):
-                count += 1
-    return count
+            if not line or line.startswith("#"):
+                continue
+            yield line_no, parse_conn_line(line)
 
 
-def parse_file(input_path: Path, output_path: Path, limit: int | None = None):
+def parse_file_to_jsonl(input_path: Path, output_path: Path, limit: int | None = None):
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     parsed = 0
     failed = 0
 
-    total_data_lines = count_data_lines(input_path)
-    progress_total = min(total_data_lines, limit) if limit is not None else total_data_lines
-
     with input_path.open("r", encoding="utf-8", errors="replace") as fin, \
-         output_path.open("w", encoding="utf-8") as fout, \
-         tqdm(total=progress_total, desc="Parsing conn.log", unit="event") as pbar:
+         output_path.open("w", encoding="utf-8") as fout:
 
         for line in fin:
             if limit is not None and parsed >= limit:
@@ -154,11 +163,8 @@ def parse_file(input_path: Path, output_path: Path, limit: int | None = None):
                 event = parse_conn_line(line)
                 fout.write(json.dumps(event, ensure_ascii=False) + "\n")
                 parsed += 1
-                pbar.update(1)
-                pbar.set_postfix(parsed=parsed, failed=failed)
             except Exception:
                 failed += 1
-                pbar.set_postfix(parsed=parsed, failed=failed)
 
     return parsed, failed
 
@@ -169,15 +175,15 @@ def main():
         "-i",
         "--input",
         type=Path,
-        default=Path("input/zeek/conn.log"),
+        default=Path("data/raw/zeek/conn.log"),
         help="Path to input conn.log file",
     )
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
-        default=Path("output/conn-logs/zeek_conn_sample.jsonl"),
-        help="Path to output JSONL file",
+        default=Path("data/sample/conn-logs/zeek_conn_sample.jsonl"),
+        help="Output JSONL file path",
     )
     parser.add_argument(
         "-n",
@@ -189,7 +195,8 @@ def main():
 
     args = parser.parse_args()
 
-    parsed, failed = parse_file(args.input, args.output, args.limit)
+    parsed, failed = parse_file_to_jsonl(args.input, args.output, args.limit)
+
     print(f"input={args.input}")
     print(f"output={args.output}")
     print(f"limit={args.limit}")
