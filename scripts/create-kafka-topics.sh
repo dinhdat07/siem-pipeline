@@ -84,7 +84,8 @@ require_command docker
 
 # shellcheck disable=SC1090
 set -a
-. "$ENV_FILE"
+# Accept both LF and CRLF env files.
+. <(tr -d '\r' < "$ENV_FILE")
 set +a
 
 require_env_var BOOTSTRAP_SERVER

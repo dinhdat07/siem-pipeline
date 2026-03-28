@@ -8,8 +8,9 @@ The current scope is:
 - parse raw Snort full alert logs into JSONL
 - replay Zeek connection events into Kafka for downstream ingestion experiments
 - replay Snort alert events into Kafka for downstream ingestion experiments
+- run Flink SQL rules that consume source topics and emit `siem.alerts`
 
-It is not yet a full end-to-end SIEM stack. There is no consumer, search backend, dashboard, or detection layer in this repo yet.
+It is not yet a full end-to-end SIEM stack. The repository has a basic Flink detection stage, but still has no search backend, dashboard, or production-grade rule set.
 
 ## Architecture
 
@@ -18,7 +19,8 @@ Current data flow:
 1. Raw datasets live under `data/raw/`.
 2. Parsers normalize events into JSONL under `data/sample/`.
 3. Kafka runs locally through Docker Compose.
-4. Zeek connection logs can be replayed into Kafka topic `zeek.conn`.
+4. Zeek and Snort raw logs can be replayed into Kafka source topics.
+5. Flink SQL jobs read Kafka source topics and write detections to `siem.alerts`.
 
 Main event types:
 
@@ -43,6 +45,12 @@ Main event types:
 |   |-- sample-data.md
 |   |-- snort_alert_schema.md
 |   `-- zeek_conn_schema.md
+|-- flink/
+|   |-- sql/
+|   |   |-- 01_create_kafka_tables.sql
+|   |   |-- 02_insert_high_priority_snort.sql
+|   |   `-- 03_insert_large_transfer_zeek.sql
+|   `-- usrlib/
 |-- parser/
 |   |-- replay_snort_to_kafka.py
 |   |-- replay_to_kafka.py
@@ -50,6 +58,7 @@ Main event types:
 |   |-- snort_alert_parser.py
 |   `-- zeek_conn_parser.py
 |-- scripts/
+|   |-- download-flink-kafka-connector.sh
 |   `-- create-kafka-topics.sh
 `-- docker-compose.yml
 ```
@@ -69,7 +78,7 @@ pip install -r parser/requirements.txt
 
 ## Kafka Setup
 
-Start Kafka:
+Start all local services (Kafka + Flink):
 
 ```powershell
 docker compose up -d
@@ -87,7 +96,7 @@ The bootstrap script is compatible with the current `docker-compose.yml` because
 
 - the Kafka container name is `kafka`
 - the script execs `/opt/kafka/bin/kafka-topics.sh` inside that container
-- the broker listens on `localhost:9092` inside the container, which matches both the Compose healthcheck and `configs/kafka/topics.env`
+- host clients use `localhost:9092` while containerized clients use `kafka:29092`
 - the script waits for readiness before creating topics
 - it creates source topics for both `zeek.conn` and `snort.alert`, plus downstream `siem.alerts`
 
@@ -99,6 +108,20 @@ bash scripts/create-kafka-topics.sh
 ```
 
 Topic names and defaults are documented in `configs/kafka/topics.env`.
+
+## Kafka Smoke Test
+
+Run these commands to validate Kafka ingest end-to-end:
+
+```powershell
+bash scripts/create-kafka-topics.sh
+python parser/replay_to_kafka.py --input data/raw/zeek/conn.log --topic zeek.conn --bootstrap-servers localhost:9092 --limit 5 --interval-ms 1
+python parser/replay_snort_to_kafka.py --input-dir data/raw/snort-alert --topic snort.alert --bootstrap-servers localhost:9092 --limit 5 --interval-ms 1
+docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic zeek.conn --from-beginning --max-messages 5 --timeout-ms 10000
+docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic snort.alert --from-beginning --max-messages 5 --timeout-ms 10000
+```
+
+Expected result: replay scripts print `sent=<N> failed=0`, and consumer commands show JSON events.
 
 ## Generate Sample Data
 
@@ -120,7 +143,7 @@ Snort parsing now runs directly from `parser/snort_alert_parser.py`.
 
 Zeek parsing also runs directly from `parser/zeek_conn_parser.py`.
 
-## Replay Zeek Events To Kafka
+## Replay Raw Events To Kafka
 
 Replay Zeek connection logs into Kafka with a fixed interval:
 
@@ -144,6 +167,63 @@ Replay Snort using original event-time gaps:
 
 ```powershell
 python parser/replay_snort_to_kafka.py --input-dir data/raw/snort-alert --topic snort.alert --bootstrap-servers localhost:9092 --limit 1000 --use-event-time
+```
+
+## Flink Step-By-Step
+
+This section runs Flink SQL in Docker and writes alerts to Kafka topic `siem.alerts`.
+
+1. Start Flink services if they are not running yet:
+
+```powershell
+docker compose up -d flink-jobmanager flink-taskmanager
+```
+
+2. Download Kafka connector jar for Flink SQL:
+
+```powershell
+bash scripts/download-flink-kafka-connector.sh
+```
+
+3. Optional sanity check for table DDL:
+
+```powershell
+docker exec flink-jobmanager /opt/flink/bin/sql-client.sh -f /opt/flink/sql/01_create_kafka_tables.sql
+```
+
+4. In terminal A, start a Flink rule job (script is self-contained and creates temporary source/sink tables in the same SQL session):
+
+```powershell
+docker exec flink-jobmanager /opt/flink/bin/sql-client.sh -f /opt/flink/sql/02_insert_high_priority_snort.sql
+```
+
+Optional Zeek rule job in another terminal:
+
+```powershell
+docker exec flink-jobmanager /opt/flink/bin/sql-client.sh -f /opt/flink/sql/03_insert_large_transfer_zeek.sql
+```
+
+5. In terminal B, replay source data to Kafka:
+
+```powershell
+python parser/replay_snort_to_kafka.py --input-dir data/raw/snort-alert --topic snort.alert --bootstrap-servers localhost:9092 --limit 200 --interval-ms 1
+python parser/replay_to_kafka.py --input data/raw/zeek/conn.log --topic zeek.conn --bootstrap-servers localhost:9092 --limit 200 --interval-ms 1
+```
+
+6. In terminal C, verify Flink output topic:
+
+```powershell
+docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic siem.alerts --from-beginning --max-messages 20 --timeout-ms 10000
+```
+
+Expected result: consumed messages contain fields from `siem_alerts_sink` (`alert_time`, `rule_name`, `source_ip`, `destination_ip`, `severity`, `evidence`, `pipeline`).
+
+7. Optional cleanup:
+
+```powershell
+docker exec flink-jobmanager /opt/flink/bin/flink list
+docker exec flink-jobmanager /opt/flink/bin/flink cancel <job-id>
+docker compose down
 ```
 
 ## Schemas And Conventions
