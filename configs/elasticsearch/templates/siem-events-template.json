@@ -1,0 +1,223 @@
+{
+  "index_patterns": ["siem-events-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "5s"
+    },
+    "mappings": {
+      "dynamic": true,
+      "date_detection": false,
+      "properties": {
+        "@timestamp": {
+          "type": "date"
+        },
+        "message": {
+          "type": "text"
+        },
+        "event": {
+          "properties": {
+            "kind": {
+              "type": "keyword"
+            },
+            "category": {
+              "type": "keyword"
+            },
+            "type": {
+              "type": "keyword"
+            },
+            "module": {
+              "type": "keyword"
+            },
+            "dataset": {
+              "type": "keyword"
+            },
+            "original": {
+              "type": "text"
+            }
+          }
+        },
+        "source": {
+          "properties": {
+            "ip": {
+              "type": "ip"
+            },
+            "port": {
+              "type": "integer"
+            },
+            "bytes": {
+              "type": "long"
+            },
+            "packets": {
+              "type": "long"
+            }
+          }
+        },
+        "destination": {
+          "properties": {
+            "ip": {
+              "type": "ip"
+            },
+            "port": {
+              "type": "integer"
+            },
+            "bytes": {
+              "type": "long"
+            },
+            "packets": {
+              "type": "long"
+            }
+          }
+        },
+        "network": {
+          "properties": {
+            "transport": {
+              "type": "keyword"
+            },
+            "protocol": {
+              "type": "keyword"
+            },
+            "bytes": {
+              "type": "long"
+            },
+            "packets": {
+              "type": "long"
+            }
+          }
+        },
+        "rule": {
+          "properties": {
+            "id": {
+              "type": "keyword"
+            },
+            "name": {
+              "type": "keyword"
+            },
+            "category": {
+              "type": "keyword"
+            }
+          }
+        },
+        "related": {
+          "properties": {
+            "ip": {
+              "type": "ip"
+            }
+          }
+        },
+        "log": {
+          "properties": {
+            "file": {
+              "properties": {
+                "path": {
+                  "type": "keyword"
+                }
+              }
+            }
+          }
+        },
+        "zeek": {
+          "properties": {
+            "conn": {
+              "properties": {
+                "uid": {
+                  "type": "keyword"
+                },
+                "service": {
+                  "type": "keyword"
+                },
+                "duration": {
+                  "type": "float"
+                },
+                "state": {
+                  "type": "keyword"
+                },
+                "history": {
+                  "type": "keyword"
+                },
+                "missed_bytes": {
+                  "type": "long"
+                },
+                "local_orig": {
+                  "type": "boolean"
+                },
+                "tunnel_parents": {
+                  "type": "keyword"
+                }
+              }
+            }
+          }
+        },
+        "snort": {
+          "properties": {
+            "generator_id": {
+              "type": "integer"
+            },
+            "signature_id": {
+              "type": "integer"
+            },
+            "signature_revision": {
+              "type": "integer"
+            },
+            "xref": {
+              "type": "keyword"
+            },
+            "extra": {
+              "type": "keyword"
+            },
+            "ip": {
+              "properties": {
+                "ttl": {
+                  "type": "integer"
+                },
+                "tos": {
+                  "type": "keyword"
+                },
+                "id": {
+                  "type": "integer"
+                },
+                "len": {
+                  "type": "integer"
+                },
+                "flags": {
+                  "type": "keyword"
+                }
+              }
+            },
+            "packet": {
+              "properties": {
+                "len": {
+                  "type": "integer"
+                }
+              }
+            },
+            "tcp": {
+              "properties": {
+                "flags_raw": {
+                  "type": "keyword"
+                },
+                "seq": {
+                  "type": "keyword"
+                },
+                "ack": {
+                  "type": "keyword"
+                },
+                "window": {
+                  "type": "keyword"
+                },
+                "len": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "priority": 500,
+  "_meta": {
+    "description": "Phase 1 events template for normalized Zeek and Snort events."
+  }
+}

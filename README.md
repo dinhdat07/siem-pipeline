@@ -1,65 +1,74 @@
 # SIEM Pipeline
 
-This repository is a data-engineering lab for a SIEM-style pipeline built around Kafka, Zeek connection logs, and Snort alert logs.
+This repository is a data-engineering lab for a SIEM-style pipeline built around Kafka, Flink, Elasticsearch, and Kibana.
 
-The current scope is:
+The repository now implements phase 1 of the roadmap:
 
-- parse raw Zeek `conn.log` into ECS-like JSON events
-- parse raw Snort full alert logs into JSONL
-- replay Zeek connection events into Kafka for downstream ingestion experiments
-- replay Snort alert events into Kafka for downstream ingestion experiments
-- run Flink SQL rules that consume source topics and emit `siem.alerts`
+- normalized Zeek and Snort events are replayed into Kafka
+- Kafka remains the central event bus
+- Kafka Connect indexes normalized events into Elasticsearch
+- Flink consumes Kafka topics and produces `siem.alerts`
+- Kafka Connect also indexes `siem.alerts` into a dedicated alerts index
+- Kibana dashboards and saved searches provide basic investigation views
 
-It is not yet a full end-to-end SIEM stack. The repository has a basic Flink detection stage, but still has no search backend, dashboard, or production-grade rule set.
+Phases 2-5 are planned but not implemented yet. See [docs/roadmap.md](/mnt/e/coding/learn%20data/data%20engineering/siem-pipeline/docs/roadmap.md).
 
-## Architecture
+## Phase 1 Architecture
 
-Current data flow:
+```text
+Zeek raw logs ----> parser/replay ----> zeek.conn -----\
+                                                        \
+Snort raw logs ---> parser/replay ----> snort.alert ----> Kafka ----> Kafka Connect ----> Elasticsearch ----> Kibana
+                                                        /
+Flink SQL <--------------------------------------------/
+   |
+   +----> siem.alerts ----> Kafka Connect ----> Elasticsearch alerts index ----> Kibana
+```
 
-1. Raw datasets live under `data/raw/`.
-2. Parsers normalize events into JSONL under `data/sample/`.
-3. Kafka runs locally through Docker Compose.
-4. Zeek and Snort raw logs can be replayed into Kafka source topics.
-5. Flink SQL jobs read Kafka source topics and write detections to `siem.alerts`.
+Key design decisions for phase 1:
 
-Main event types:
+- Kafka is the system boundary. Elasticsearch is a hot search sink, not the event bus.
+- Normalized events from `zeek.conn` and `snort.alert` are indexed into one events index pattern: `siem-events-*`.
+- Flink keeps generating alerts into Kafka topic `siem.alerts`; that same payload is also indexed into `siem-alerts-*`.
+- Kafka Connect is used for Elasticsearch indexing so Flink stays focused on stream processing and alert generation.
 
-- `zeek.conn`: normalized network connection events
-- `snort.alert`: normalized IDS alert events
+More detail lives in [docs/phase1-hot-path.md](/mnt/e/coding/learn%20data/data%20engineering/siem-pipeline/docs/phase1-hot-path.md).
 
 ## Repository Layout
 
 ```text
 .
 |-- configs/
-|   `-- kafka/
-|       `-- topics.env
+|   |-- elasticsearch/
+|   |   `-- templates/
+|   |-- kafka/
+|   |   `-- topics.env
+|   `-- kafka-connect/
+|-- dashboards/
+|   `-- siem-phase1.ndjson
 |-- data/
 |   |-- raw/
-|   |   |-- snort-alert/
-|   |   `-- zeek/
 |   `-- sample/
-|       |-- conn-logs/
-|       `-- snort-alerts/
+|-- docker/
+|   `-- connect/
 |-- docs/
+|   |-- phase1-hot-path.md
+|   |-- roadmap.md
+|   |-- siem_alert_schema.md
 |   |-- sample-data.md
 |   |-- snort_alert_schema.md
 |   `-- zeek_conn_schema.md
 |-- flink/
 |   |-- sql/
-|   |   |-- 01_create_kafka_tables.sql
-|   |   |-- 02_insert_high_priority_snort.sql
-|   |   `-- 03_insert_large_transfer_zeek.sql
 |   `-- usrlib/
 |-- parser/
-|   |-- replay_snort_to_kafka.py
-|   |-- replay_to_kafka.py
-|   |-- requirements.txt
-|   |-- snort_alert_parser.py
-|   `-- zeek_conn_parser.py
 |-- scripts/
-|   |-- download-flink-kafka-connector.sh
-|   `-- create-kafka-topics.sh
+|   |-- bootstrap-elasticsearch.sh
+|   |-- bootstrap-hot-path.sh
+|   |-- create-kafka-topics.sh
+|   |-- import-kibana-saved-objects.sh
+|   |-- register-kafka-connectors.sh
+|   `-- download-flink-kafka-connector.sh
 `-- docker-compose.yml
 ```
 
@@ -67,178 +76,153 @@ Main event types:
 
 - Docker Desktop or another Docker runtime
 - Python 3.10+
-- pip
+- `pip`
 - Bash shell to run `.sh` scripts on Windows, for example Git Bash or WSL
 
-Install Python dependencies:
+Install parser dependencies:
 
-```powershell
+```bash
 pip install -r parser/requirements.txt
 ```
 
-## Kafka Setup
+## Start The Stack
 
-Start all local services (Kafka + Flink):
+Start Kafka, Flink, Elasticsearch, Kibana, and Kafka Connect:
 
-```powershell
-docker compose up -d
+```bash
+docker compose up -d --build
 ```
 
-This Compose file runs a single-node Kafka 4.x broker in KRaft mode.
+The local endpoints are:
 
-Topic auto-creation is disabled, so create topics explicitly after the broker is up:
+- Kafka external bootstrap: `localhost:9092`
+- Flink UI: `http://localhost:8081`
+- Elasticsearch: `http://localhost:9200`
+- Kibana: `http://localhost:5601`
+- Kafka Connect: `http://localhost:8083`
 
-```powershell
+## Bootstrap Phase 1
+
+After the stack is healthy, bootstrap topics, Elasticsearch templates and aliases, Kafka Connect sinks, and Kibana saved objects:
+
+```bash
+bash scripts/bootstrap-hot-path.sh
+```
+
+What this does:
+
+1. creates Kafka source topics, `siem.alerts`, Kafka Connect internal topics, and the connector DLQ topic
+2. installs Elasticsearch index templates for events and alerts
+3. creates `siem-events-000001` and `siem-alerts-000001` with write aliases `siem-events` and `siem-alerts`
+4. registers the Kafka Connect Elasticsearch sink connectors
+5. imports the Kibana data views, saved searches, and dashboards
+
+If you want to run the bootstrap steps individually:
+
+```bash
 bash scripts/create-kafka-topics.sh
+bash scripts/bootstrap-elasticsearch.sh
+bash scripts/register-kafka-connectors.sh
+bash scripts/import-kibana-saved-objects.sh
 ```
 
-The bootstrap script is compatible with the current `docker-compose.yml` because:
+## Replay Data Into Kafka
 
-- the Kafka container name is `kafka`
-- the script execs `/opt/kafka/bin/kafka-topics.sh` inside that container
-- host clients use `localhost:9092` while containerized clients use `kafka:29092`
-- the script waits for readiness before creating topics
-- it creates source topics for both `zeek.conn` and `snort.alert`, plus downstream `siem.alerts`
+Replay Zeek connection logs:
 
-If you rename the container in Compose, override `KAFKA_CONTAINER` before running the script:
-
-```powershell
-$env:KAFKA_CONTAINER="your-container-name"
-bash scripts/create-kafka-topics.sh
+```bash
+python3 parser/replay_to_kafka.py --input data/raw/zeek/conn.log --topic zeek.conn --bootstrap-servers localhost:9092 --limit 1000 --interval-ms 50
 ```
 
-Topic names and defaults are documented in `configs/kafka/topics.env`.
+Replay Snort alerts:
 
-## Kafka Smoke Test
-
-Run these commands to validate Kafka ingest end-to-end:
-
-```powershell
-bash scripts/create-kafka-topics.sh
-python parser/replay_to_kafka.py --input data/raw/zeek/conn.log --topic zeek.conn --bootstrap-servers localhost:9092 --limit 5 --interval-ms 1
-python parser/replay_snort_to_kafka.py --input-dir data/raw/snort-alert --topic snort.alert --bootstrap-servers localhost:9092 --limit 5 --interval-ms 1
-docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic zeek.conn --from-beginning --max-messages 5 --timeout-ms 10000
-docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic snort.alert --from-beginning --max-messages 5 --timeout-ms 10000
+```bash
+python3 parser/replay_snort_to_kafka.py --input-dir data/raw/snort-alert --topic snort.alert --bootstrap-servers localhost:9092 --limit 1000 --interval-ms 50
 ```
 
-Expected result: replay scripts print `sent=<N> failed=0`, and consumer commands show JSON events.
+## Run Flink Rules
 
-## Generate Sample Data
+Download the Kafka connector jar once:
 
-Detailed instructions live in `docs/sample-data.md`.
-
-Generate a 10,000-event Zeek sample:
-
-```powershell
-python parser/zeek_conn_parser.py --input data/raw/zeek/conn.log --output data/sample/conn-logs/zeek_conn_sample.jsonl --limit 10000
-```
-
-Generate a 10,000-event Snort sample:
-
-```powershell
-python parser/snort_alert_parser.py --input-dir data/raw/snort-alert --output data/sample/snort-alerts/snort_alerts_sample.jsonl --limit 10000
-```
-
-Snort parsing now runs directly from `parser/snort_alert_parser.py`.
-
-Zeek parsing also runs directly from `parser/zeek_conn_parser.py`.
-
-## Replay Raw Events To Kafka
-
-Replay Zeek connection logs into Kafka with a fixed interval:
-
-```powershell
-python parser/replay_to_kafka.py --input data/raw/zeek/conn.log --topic zeek.conn --bootstrap-servers localhost:9092 --limit 1000 --interval-ms 100
-```
-
-Replay using original event-time gaps:
-
-```powershell
-python parser/replay_to_kafka.py --input data/raw/zeek/conn.log --topic zeek.conn --bootstrap-servers localhost:9092 --limit 1000 --use-event-time
-```
-
-Replay Snort alert logs into Kafka:
-
-```powershell
-python parser/replay_snort_to_kafka.py --input-dir data/raw/snort-alert --topic snort.alert --bootstrap-servers localhost:9092 --limit 1000 --interval-ms 100
-```
-
-Replay Snort using original event-time gaps:
-
-```powershell
-python parser/replay_snort_to_kafka.py --input-dir data/raw/snort-alert --topic snort.alert --bootstrap-servers localhost:9092 --limit 1000 --use-event-time
-```
-
-## Flink Step-By-Step
-
-This section runs Flink SQL in Docker and writes alerts to Kafka topic `siem.alerts`.
-
-1. Start Flink services if they are not running yet:
-
-```powershell
-docker compose up -d flink-jobmanager flink-taskmanager
-```
-
-2. Download Kafka connector jar for Flink SQL:
-
-```powershell
+```bash
 bash scripts/download-flink-kafka-connector.sh
 ```
 
-3. Optional sanity check for table DDL:
+Run the current phase 1 Flink jobs:
 
-```powershell
-docker exec flink-jobmanager /opt/flink/bin/sql-client.sh -f /opt/flink/sql/01_create_kafka_tables.sql
-```
-
-4. In terminal A, start a Flink rule job (script is self-contained and creates temporary source/sink tables in the same SQL session):
-
-```powershell
+```bash
 docker exec flink-jobmanager /opt/flink/bin/sql-client.sh -f /opt/flink/sql/02_insert_high_priority_snort.sql
 ```
 
-Optional Zeek rule job in another terminal:
+Optional second rule:
 
-```powershell
+```bash
 docker exec flink-jobmanager /opt/flink/bin/sql-client.sh -f /opt/flink/sql/03_insert_large_transfer_zeek.sql
 ```
 
-5. In terminal B, replay source data to Kafka:
+The current Flink jobs read from Kafka and write alerts back to Kafka topic `siem.alerts`. Kafka Connect then indexes those alerts into Elasticsearch.
 
-```powershell
-python parser/replay_snort_to_kafka.py --input-dir data/raw/snort-alert --topic snort.alert --bootstrap-servers localhost:9092 --limit 200 --interval-ms 1
-python parser/replay_to_kafka.py --input data/raw/zeek/conn.log --topic zeek.conn --bootstrap-servers localhost:9092 --limit 200 --interval-ms 1
+## Verify Phase 1
+
+Kafka topic checks:
+
+```bash
+docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic zeek.conn --from-beginning --max-messages 5 --timeout-ms 10000
+docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic snort.alert --from-beginning --max-messages 5 --timeout-ms 10000
+docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic siem.alerts --from-beginning --max-messages 5 --timeout-ms 10000
 ```
 
-6. In terminal C, verify Flink output topic:
+Elasticsearch checks:
 
-```powershell
-docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic siem.alerts --from-beginning --max-messages 20 --timeout-ms 10000
+```bash
+curl http://localhost:9200/_cat/indices/siem-events-*?v
+curl http://localhost:9200/_cat/indices/siem-alerts-*?v
+curl http://localhost:9200/siem-events/_search?q=event.dataset:zeek.conn&size=3
+curl http://localhost:9200/siem-alerts/_search?q=event.kind:alert&size=3
 ```
 
-Expected result: consumed messages contain fields from `siem_alerts_sink` (`alert_time`, `rule_name`, `source_ip`, `destination_ip`, `severity`, `evidence`, `pipeline`).
+Kafka Connect checks:
 
-7. Optional cleanup:
-
-```powershell
-docker exec flink-jobmanager /opt/flink/bin/flink list
-docker exec flink-jobmanager /opt/flink/bin/flink cancel <job-id>
-docker compose down
+```bash
+curl http://localhost:8083/connectors
+curl http://localhost:8083/connectors/siem-events-sink/status
+curl http://localhost:8083/connectors/siem-alerts-sink/status
 ```
 
-## Schemas And Conventions
+Kibana checks:
 
-- Zeek connection schema: `docs/zeek_conn_schema.md`
-- Snort alert schema: `docs/snort_alert_schema.md`
-- Output format: JSON Lines (`.jsonl`)
-- Field naming: ECS-inspired, not a full ECS implementation
+- open `http://localhost:5601`
+- confirm the imported dashboards exist
+- open `SIEM Overview`
+- open `SIEM Alerts`
+- open `Alert Investigation Workflow`
+- the dashboards should open on the sample data time range automatically (`2012-03-16T07:00:00Z` to `2012-03-16T13:00:00Z`)
 
-Examples:
+Expected result:
 
-- Zeek sample output: `data/sample/conn-logs/zeek_conn_sample.jsonl`
-- Snort sample output: `data/sample/snort-alerts/snort_alerts_sample.jsonl`
+- `zeek.conn` and `snort.alert` documents appear in `siem-events-*`
+- `siem.alerts` documents appear in `siem-alerts-*`
+- Kibana dashboards render event volume, alert severity/rules, top IPs, top talkers, and timeline views without `Invalid visualization type "bar"` errors
+- you can pivot from an alert to related raw events by filtering on `source.ip`, `destination.ip`, and time range
 
-## Current Gaps
+## Schemas
 
-- no root test suite yet
-- docs were previously written against an older `input/` and `output/` layout; this README reflects the current `data/raw/` and `data/sample/` structure
+- Zeek connection schema: [docs/zeek_conn_schema.md](/mnt/e/coding/learn%20data/data%20engineering/siem-pipeline/docs/zeek_conn_schema.md)
+- Snort alert schema: [docs/snort_alert_schema.md](/mnt/e/coding/learn%20data/data%20engineering/siem-pipeline/docs/snort_alert_schema.md)
+- Canonical SIEM alert schema: [docs/siem_alert_schema.md](/mnt/e/coding/learn%20data/data%20engineering/siem-pipeline/docs/siem_alert_schema.md)
+
+## Current Scope And Gaps
+
+Implemented now:
+
+- Kafka-based ingest and replay
+- phase 1 Elasticsearch and Kibana hot path
+- Kafka Connect sinks for events and alerts
+- simple Flink-generated alerts written to Kafka and indexed for investigation
+
+Not implemented yet:
+
+- MinIO and Iceberg cold storage
+- advanced SIEM detection logic
+- one-command end-to-end reproducible lab bootstrap for all later phases
+- benchmarking and validation harness

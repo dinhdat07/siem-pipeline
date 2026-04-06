@@ -65,6 +65,7 @@ create_topic() {
   local topic_name="$1"
   local partitions="$2"
   local replication_factor="$3"
+  shift 3
 
   log_info "Ensuring topic exists: $topic_name"
   run_kafka_topics \
@@ -72,7 +73,8 @@ create_topic() {
     --if-not-exists \
     --topic "$topic_name" \
     --partitions "$partitions" \
-    --replication-factor "$replication_factor"
+    --replication-factor "$replication_factor" \
+    "$@"
 }
 
 if [ ! -f "$ENV_FILE" ]; then
@@ -98,6 +100,18 @@ require_env_var TOPIC_SNORT_ALERT_RF
 require_env_var TOPIC_ALERTS
 require_env_var TOPIC_ALERTS_PARTITIONS
 require_env_var TOPIC_ALERTS_RF
+require_env_var TOPIC_CONNECT_CONFIGS
+require_env_var TOPIC_CONNECT_CONFIGS_PARTITIONS
+require_env_var TOPIC_CONNECT_CONFIGS_RF
+require_env_var TOPIC_CONNECT_OFFSETS
+require_env_var TOPIC_CONNECT_OFFSETS_PARTITIONS
+require_env_var TOPIC_CONNECT_OFFSETS_RF
+require_env_var TOPIC_CONNECT_STATUS
+require_env_var TOPIC_CONNECT_STATUS_PARTITIONS
+require_env_var TOPIC_CONNECT_STATUS_RF
+require_env_var TOPIC_CONNECT_DLQ
+require_env_var TOPIC_CONNECT_DLQ_PARTITIONS
+require_env_var TOPIC_CONNECT_DLQ_RF
 
 if ! docker container inspect "$KAFKA_CONTAINER" >/dev/null 2>&1; then
   log_error "Kafka container not found: $KAFKA_CONTAINER"
@@ -110,6 +124,10 @@ wait_for_kafka
 create_topic "$TOPIC_ZEEK_CONN" "$TOPIC_ZEEK_CONN_PARTITIONS" "$TOPIC_ZEEK_CONN_RF"
 create_topic "$TOPIC_SNORT_ALERT" "$TOPIC_SNORT_ALERT_PARTITIONS" "$TOPIC_SNORT_ALERT_RF"
 create_topic "$TOPIC_ALERTS" "$TOPIC_ALERTS_PARTITIONS" "$TOPIC_ALERTS_RF"
+create_topic "$TOPIC_CONNECT_CONFIGS" "$TOPIC_CONNECT_CONFIGS_PARTITIONS" "$TOPIC_CONNECT_CONFIGS_RF" --config cleanup.policy=compact
+create_topic "$TOPIC_CONNECT_OFFSETS" "$TOPIC_CONNECT_OFFSETS_PARTITIONS" "$TOPIC_CONNECT_OFFSETS_RF" --config cleanup.policy=compact
+create_topic "$TOPIC_CONNECT_STATUS" "$TOPIC_CONNECT_STATUS_PARTITIONS" "$TOPIC_CONNECT_STATUS_RF" --config cleanup.policy=compact
+create_topic "$TOPIC_CONNECT_DLQ" "$TOPIC_CONNECT_DLQ_PARTITIONS" "$TOPIC_CONNECT_DLQ_RF"
 
 log_info "Current topics:"
 run_kafka_topics --list

@@ -1,7 +1,7 @@
 import argparse
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 RULE_RE = re.compile(r"^\[\*\*\] \[(\d+):(\d+):(\d+)\] (.+) \[\*\*\]$")
@@ -23,7 +23,10 @@ SNORT_GLOB = "alert.full.maccdc2012_*.pcap"
 
 
 def parse_event_datetime(mmdd: str, time_str: str) -> datetime:
-    return datetime.strptime(f"{YEAR}/{mmdd} {time_str}", "%Y/%m/%d %H:%M:%S.%f")
+    return datetime.strptime(
+        f"{YEAR}/{mmdd} {time_str}",
+        "%Y/%m/%d %H:%M:%S.%f",
+    ).replace(tzinfo=timezone.utc)
 
 
 def parse_timestamp(mmdd: str, time_str: str) -> str:

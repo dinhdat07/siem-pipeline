@@ -35,13 +35,21 @@ CREATE TABLE snort_alert_src (
 );
 
 CREATE TABLE siem_alerts_sink (
-  alert_time STRING,
-  rule_name STRING,
-  source_ip STRING,
-  destination_ip STRING,
-  severity INT,
-  evidence STRING,
-  pipeline STRING
+  `@timestamp` STRING,
+  `event.kind` STRING,
+  `event.category` ARRAY<STRING>,
+  `event.type` ARRAY<STRING>,
+  `event.module` STRING,
+  `event.dataset` STRING,
+  `event.severity` INT,
+  `rule.id` STRING,
+  `rule.name` STRING,
+  `message` STRING,
+  `source.ip` STRING,
+  `destination.ip` STRING,
+  `related.ip` ARRAY<STRING>,
+  `pipeline` STRING,
+  evidence STRING
 ) WITH (
   'connector' = 'kafka',
   'topic' = 'siem.alerts',

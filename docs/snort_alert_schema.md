@@ -14,7 +14,7 @@ Each record represents a single Snort alert event parsed from the MACCDC 2012 fu
 
 | Field            | Type      | Description                                                |
 | ---------------- | --------- | ---------------------------------------------------------- |
-| `@timestamp`     | date      | Alert timestamp (ISO-8601, derived from Snort log text)    |
+| `@timestamp`     | date      | Alert timestamp (UTC ISO-8601, derived from Snort log text) |
 | `event.kind`     | keyword   | Type of event (always `alert`)                             |
 | `event.category` | keyword[] | Event category (always `intrusion_detection`)              |
 | `event.type`     | keyword[] | Event type (currently `info`)                              |
@@ -108,7 +108,7 @@ Each record represents a single Snort alert event parsed from the MACCDC 2012 fu
 
 ```json
 {
-  "@timestamp": "2012-03-16T07:30:00",
+  "@timestamp": "2012-03-16T07:30:00+00:00",
   "event.kind": "alert",
   "event.category": ["intrusion_detection"],
   "event.type": ["info"],

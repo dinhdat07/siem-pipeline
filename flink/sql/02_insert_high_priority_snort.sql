@@ -18,13 +18,21 @@ CREATE TEMPORARY TABLE snort_alert_src (
 );
 
 CREATE TEMPORARY TABLE siem_alerts_sink (
-  alert_time STRING,
-  rule_name STRING,
-  source_ip STRING,
-  destination_ip STRING,
-  severity INT,
-  evidence STRING,
-  pipeline STRING
+  `@timestamp` STRING,
+  `event.kind` STRING,
+  `event.category` ARRAY<STRING>,
+  `event.type` ARRAY<STRING>,
+  `event.module` STRING,
+  `event.dataset` STRING,
+  `event.severity` INT,
+  `rule.id` STRING,
+  `rule.name` STRING,
+  `message` STRING,
+  `source.ip` STRING,
+  `destination.ip` STRING,
+  `related.ip` ARRAY<STRING>,
+  `pipeline` STRING,
+  evidence STRING
 ) WITH (
   'connector' = 'kafka',
   'topic' = 'siem.alerts',
@@ -35,13 +43,21 @@ CREATE TEMPORARY TABLE siem_alerts_sink (
 
 INSERT INTO siem_alerts_sink
 SELECT
-  `@timestamp` AS alert_time,
-  COALESCE(`rule.name`, 'snort.alert') AS rule_name,
-  `source.ip` AS source_ip,
-  `destination.ip` AS destination_ip,
-  `event.severity` AS severity,
-  `message` AS evidence,
-  'flink.snort.high_priority' AS pipeline
+  `@timestamp`,
+  'alert' AS `event.kind`,
+  ARRAY['intrusion_detection'] AS `event.category`,
+  ARRAY['indicator'] AS `event.type`,
+  'flink' AS `event.module`,
+  'siem.alert' AS `event.dataset`,
+  `event.severity`,
+  'flink.snort.high_priority' AS `rule.id`,
+  COALESCE(`rule.name`, 'snort.high_priority') AS `rule.name`,
+  CONCAT('High priority Snort alert: ', COALESCE(`rule.name`, 'snort.high_priority')) AS `message`,
+  `source.ip`,
+  `destination.ip`,
+  ARRAY[`source.ip`, `destination.ip`] AS `related.ip`,
+  'flink.snort.high_priority' AS `pipeline`,
+  `message` AS evidence
 FROM snort_alert_src
 WHERE `event.severity` IS NOT NULL
   AND `event.severity` <= 2;
