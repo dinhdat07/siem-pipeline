@@ -20,10 +20,13 @@ This roadmap keeps Kafka as the central event bus, keeps Flink focused on stream
 
 ## Phase 2
 
+Implemented in the current repo state:
+
 - Add MinIO and Iceberg as the cold path.
 - Use Flink SQL plus Iceberg connector to write normalized events from Kafka into Parquet-backed Iceberg tables.
 - Partition by event date and dataset.
 - Do not remove or bypass Kafka. The hot and cold paths both branch from Kafka.
+- Keep the REST-catalog boundary so local development can later move to a multi-node deployment shape.
 
 ## Phase 3
 

@@ -1,36 +1,26 @@
 services:
   kafka:
-    image: apache/kafka:4.1.2
+    image: ${KAFKA_IMAGE:-apache/kafka:4.1.2}
     container_name: kafka
     hostname: kafka
     ports:
-      - "9092:9092"
+      - "${KAFKA_EXTERNAL_PORT:-9092}:9092"
     environment:
-      # KRaft single-node
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-
-      # Listeners
       KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:${KAFKA_EXTERNAL_PORT:-9092}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
-
-      # Single-node safe defaults
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-
-      # Best practice for your lab: disable auto topic creation
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
-
-      # Optional useful defaults
       KAFKA_NUM_PARTITIONS: 3
       KAFKA_DEFAULT_REPLICATION_FACTOR: 1
       KAFKA_LOG_RETENTION_HOURS: 168
-
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
@@ -41,11 +31,11 @@ services:
       start_period: 20s
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.3
+    image: ${ELASTICSEARCH_IMAGE:-docker.elastic.co/elasticsearch/elasticsearch:8.17.3}
     container_name: elasticsearch
     hostname: elasticsearch
     ports:
-      - "9200:9200"
+      - "${ELASTICSEARCH_PORT:-9200}:9200"
     environment:
       discovery.type: single-node
       xpack.security.enabled: "false"
@@ -54,14 +44,14 @@ services:
       - elasticsearch_data:/usr/share/elasticsearch/data
 
   kibana:
-    image: docker.elastic.co/kibana/kibana:8.17.3
+    image: ${KIBANA_IMAGE:-docker.elastic.co/kibana/kibana:8.17.3}
     container_name: kibana
     hostname: kibana
     ports:
-      - "5601:5601"
+      - "${KIBANA_PORT:-5601}:5601"
     environment:
       ELASTICSEARCH_HOSTS: http://elasticsearch:9200
-      SERVER_PUBLICBASEURL: http://localhost:5601
+      SERVER_PUBLICBASEURL: http://localhost:${KIBANA_PORT:-5601}
     depends_on:
       elasticsearch:
         condition: service_started
@@ -73,9 +63,9 @@ services:
     container_name: connect
     hostname: connect
     ports:
-      - "8083:8083"
+      - "${KAFKA_CONNECT_PORT:-8083}:8083"
     environment:
-      CONNECT_BOOTSTRAP_SERVERS: kafka:29092
+      CONNECT_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS_INTERNAL:-kafka:29092}
       CONNECT_GROUP_ID: siem-connect
       CONNECT_CONFIG_STORAGE_TOPIC: connect-configs
       CONNECT_OFFSET_STORAGE_TOPIC: connect-offsets
@@ -103,41 +93,141 @@ services:
       elasticsearch:
         condition: service_started
 
+  minio:
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-04-22T22-12-26Z}
+    container_name: minio
+    hostname: minio
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password}
+      MINIO_DOMAIN: minio
+      MINIO_REGION_NAME: ${MINIO_REGION:-us-east-1}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      default:
+        aliases:
+          - warehouse.minio
+
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-04-16T18-13-26Z}
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: >-
+      /bin/sh -c "
+      until (/usr/bin/mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-admin} ${MINIO_ROOT_PASSWORD:-password}) do echo '...waiting for minio...' && sleep 1; done;
+      /usr/bin/mc mb --ignore-existing local/${MINIO_WAREHOUSE_BUCKET:-warehouse};
+      "
+
+  iceberg-rest:
+    image: ${ICEBERG_REST_IMAGE:-apache/iceberg-rest-fixture:1.10.1}
+    container_name: iceberg-rest
+    hostname: iceberg-rest
+    ports:
+      - "${ICEBERG_REST_PORT:-8181}:8181"
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      AWS_REGION: ${MINIO_REGION:-us-east-1}
+      CATALOG_WAREHOUSE: ${ICEBERG_WAREHOUSE:-s3://warehouse/}
+      CATALOG_CATALOG__IMPL: ${ICEBERG_CATALOG_IMPL:-org.apache.iceberg.jdbc.JdbcCatalog}
+      CATALOG_URI: ${ICEBERG_CATALOG_JDBC_URI:-jdbc:sqlite:/tmp/iceberg_catalog.db}
+      CATALOG_JDBC_USER: ${ICEBERG_CATALOG_JDBC_USER:-user}
+      CATALOG_JDBC_PASSWORD: ${ICEBERG_CATALOG_JDBC_PASSWORD:-password}
+      CATALOG_JDBC_STRICT__MODE: ${ICEBERG_CATALOG_JDBC_STRICT_MODE:-true}
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: ${S3_ENDPOINT_INTERNAL:-http://minio:9000}
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      CATALOG_S3_ACCESS__KEY__ID: ${MINIO_ROOT_USER:-admin}
+      CATALOG_S3_SECRET__ACCESS__KEY: ${MINIO_ROOT_PASSWORD:-password}
+    volumes:
+      - iceberg_catalog_data:/tmp
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8181/v1/config"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
   flink-jobmanager:
-    image: flink:1.19.2-scala_2.12-java17
+    build:
+      context: .
+      dockerfile: docker/flink/Dockerfile
+      args:
+        FLINK_BASE_IMAGE: ${FLINK_BASE_IMAGE:-flink:1.19.2-scala_2.12-java17}
+        FLINK_SQL_KAFKA_CONNECTOR_VERSION: ${FLINK_SQL_KAFKA_CONNECTOR_VERSION:-3.2.0-1.19}
+        ICEBERG_FLINK_RUNTIME_VERSION: ${ICEBERG_FLINK_RUNTIME_VERSION:-1.19}
+        ICEBERG_VERSION: ${ICEBERG_VERSION:-1.10.1}
+        HADOOP_VERSION: ${HADOOP_VERSION:-3.4.2}
     container_name: flink-jobmanager
+    hostname: flink-jobmanager
     command: jobmanager
     ports:
-      - "8081:8081"
+      - "${FLINK_UI_PORT:-8081}:8081"
     environment:
-      - |
-        FLINK_PROPERTIES=
+      FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         rest.port: 8081
-        parallelism.default: 1
+        taskmanager.numberOfTaskSlots: ${FLINK_TASK_SLOTS:-4}
+        parallelism.default: ${FLINK_PARALLELISM:-1}
+      AWS_REGION: ${MINIO_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-admin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-password}
+      S3_ENDPOINT: ${S3_ENDPOINT_INTERNAL:-http://minio:9000}
     volumes:
       - ./flink/sql:/opt/flink/sql
       - ./flink/usrlib:/opt/flink/usrlib
     depends_on:
       kafka:
         condition: service_healthy
+      iceberg-rest:
+        condition: service_healthy
 
   flink-taskmanager:
-    image: flink:1.19.2-scala_2.12-java17
+    build:
+      context: .
+      dockerfile: docker/flink/Dockerfile
+      args:
+        FLINK_BASE_IMAGE: ${FLINK_BASE_IMAGE:-flink:1.19.2-scala_2.12-java17}
+        FLINK_SQL_KAFKA_CONNECTOR_VERSION: ${FLINK_SQL_KAFKA_CONNECTOR_VERSION:-3.2.0-1.19}
+        ICEBERG_FLINK_RUNTIME_VERSION: ${ICEBERG_FLINK_RUNTIME_VERSION:-1.19}
+        ICEBERG_VERSION: ${ICEBERG_VERSION:-1.10.1}
+        HADOOP_VERSION: ${HADOOP_VERSION:-3.4.2}
     container_name: flink-taskmanager
+    hostname: flink-taskmanager
     command: taskmanager
     environment:
-      - |
-        FLINK_PROPERTIES=
+      FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
-        taskmanager.numberOfTaskSlots: 4
-        parallelism.default: 1
-    volumes:
-      - ./flink/usrlib:/opt/flink/usrlib
+        taskmanager.numberOfTaskSlots: ${FLINK_TASK_SLOTS:-4}
+        parallelism.default: ${FLINK_PARALLELISM:-1}
+      AWS_REGION: ${MINIO_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-admin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-password}
+      S3_ENDPOINT: ${S3_ENDPOINT_INTERNAL:-http://minio:9000}
     depends_on:
       flink-jobmanager:
         condition: service_started
+    volumes:
+      - ./flink/sql:/opt/flink/sql
+      - ./flink/usrlib:/opt/flink/usrlib
 
 volumes:
   kafka_data:
   elasticsearch_data:
+  minio_data:
+  iceberg_catalog_data:

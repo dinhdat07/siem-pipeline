@@ -7,6 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="$REPO_ROOT/configs/kafka/topics.env"
+ROOT_ENV_FILE="${ENV_FILE_OVERRIDE:-$REPO_ROOT/.env}"
 
 KAFKA_CONTAINER="${KAFKA_CONTAINER:-kafka}"
 KAFKA_BIN="${KAFKA_BIN:-/opt/kafka/bin/kafka-topics.sh}"
@@ -83,6 +84,14 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 require_command docker
+
+# Load optional root .env first so topic settings can reference compose values.
+if [ -f "$ROOT_ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  set -a
+  . <(tr -d '\r' < "$ROOT_ENV_FILE")
+  set +a
+fi
 
 # shellcheck disable=SC1090
 set -a

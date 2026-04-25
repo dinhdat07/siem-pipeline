@@ -1,2 +1,4 @@
 data/raw/
 .venv/
+.env
+flink/sql/.generated/
