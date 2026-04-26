@@ -1,9 +1,10 @@
 # Architecture
 
-The lab now has two downstream storage paths that branch from the same Kafka event bus:
+The lab now has two downstream storage paths and one alerting path that branch from the same Kafka event bus:
 
 - hot path: `Kafka -> Kafka Connect -> Elasticsearch -> Kibana`
 - cold path: `Kafka -> Flink SQL -> Iceberg -> MinIO`
+- detection path: `Kafka -> Flink SQL -> siem.alerts -> Kafka Connect -> Elasticsearch`
 
 ## End-To-End Flow
 
@@ -12,9 +13,9 @@ Raw Zeek logs ---> Python parser/replay ----> zeek.conn -----\
                                                               \
 Raw Snort logs --> Python parser/replay ----> snort.alert ----> Kafka ----> Kafka Connect ----> Elasticsearch ----> Kibana
                                                               /   |
-Flink SQL rules <--------------------------------------------/    +----> Flink SQL sink ----> Iceberg REST catalog ----> MinIO
-   |                                                                                               |
-   +----> siem.alerts -----------------------------------------------------------------------------+----> future Trino
+Flink SQL detections <---------------------------------------/    +----> Flink SQL sink ----> Iceberg REST catalog ----> MinIO
+   |                                                                                                 |
+   +----> siem.alerts ----> Kafka Connect ----> Elasticsearch alerts index --------------------------+----> future Trino
 ```
 
 ## Why This Shape
@@ -23,6 +24,7 @@ Flink SQL rules <--------------------------------------------/    +----> Flink S
 - The hot path stays untouched. Elasticsearch is still the fast investigation layer and not the event-system boundary.
 - The cold path uses an Iceberg REST catalog instead of wiring Flink directly to a filesystem-only catalog. That keeps the catalog interface portable when moving to a larger deployment.
 - MinIO provides S3-compatible storage locally while preserving the same object-storage pattern that a multi-node deployment would use later.
+- Phase 3 detection logic stays in Flink SQL so alerting remains close to the stream and easy to reason about.
 
 ## Cold-Path Components
 

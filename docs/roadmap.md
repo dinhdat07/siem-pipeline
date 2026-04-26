@@ -30,9 +30,12 @@ Implemented in the current repo state:
 
 ## Phase 3
 
+Implemented in the current repo state:
+
 - Upgrade Flink from simple filtering to real SIEM detections.
 - Implement port scan, top talkers, possible exfiltration, repeated critical Snort alerts, Snort-plus-Zeek correlation, and service/protocol anomalies.
 - Keep all rule outputs on the same `siem.alerts` schema introduced in phase 1.
+- Use event-time windows, watermarks, and interval joins where they fit the detection logic.
 
 ## Phase 4
 

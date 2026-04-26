@@ -6,10 +6,10 @@ Implemented now:
 
 - Phase 1 hot path: Kafka -> Kafka Connect -> Elasticsearch -> Kibana
 - Phase 2 cold path: Kafka -> Flink SQL -> Iceberg -> MinIO
-- Kafka remains the central event bus for both paths
-- Flink still produces `siem.alerts` for the hot path only; Phase 3 detections are not implemented yet
+- Phase 3 detections: Kafka -> Flink SQL -> `siem.alerts`
+- Kafka remains the central event bus for all ingest, storage, and alerting paths
 
-More detail lives in `docs/architecture.md`, `docs/phase1-hot-path.md`, `docs/cold-path.md`, and `docs/roadmap.md`.
+More detail lives in `docs/architecture.md`, `docs/cold-path.md`, `docs/flink-detections.md`, `docs/phase1-hot-path.md`, and `docs/roadmap.md`.
 
 ## Architecture
 
@@ -17,19 +17,18 @@ More detail lives in `docs/architecture.md`, `docs/phase1-hot-path.md`, `docs/co
 Zeek raw logs ----> parser/replay ----> zeek.conn -----\
                                                         \
 Snort raw logs ---> parser/replay ----> snort.alert ----> Kafka ----> Kafka Connect ----> Elasticsearch ----> Kibana
-                                                        /   |
-Flink SQL rules <--------------------------------------/    +----> Flink SQL cold path ----> Iceberg REST catalog ----> MinIO
-   |                                                                                                 |
-   +----> siem.alerts ----> Kafka Connect ----> Elasticsearch alerts index ----> Kibana              +----> future Trino queries
+                                                        /   |\
+Flink SQL detections <---------------------------------/    | +----> Flink SQL cold path ----> Iceberg REST catalog ----> MinIO
+   |                                                        |
+   +----> siem.alerts --------------------------------------+----> future Trino queries / downstream consumers
 ```
 
 Key design decisions:
 
-- Kafka is still the system boundary and fan-out point.
-- The hot path is unchanged: Elasticsearch and Kibana remain the realtime investigation layer.
-- The cold path uses an Iceberg REST catalog in front of object storage so the catalog contract can stay stable as the deployment grows.
-- Cold data is stored as Parquet-backed Iceberg tables partitioned by `event_date` and `event_dataset`.
-- The cold-path table keeps a shared normalized schema with nullable dataset-specific columns so Zeek and Snort can land in one table without breaking future schema evolution.
+- Kafka is the system boundary and fan-out point.
+- Flink remains the main stream-processing and detection engine.
+- Phase 3 keeps rule logic explainable and event-time driven instead of introducing ML or opaque scoring.
+- The hot and cold paths remain intact while detections continue to emit alerts to Kafka topic `siem.alerts`.
 
 ## Repository Layout
 
@@ -37,29 +36,38 @@ Key design decisions:
 .
 |-- configs/
 |   |-- elasticsearch/
+|   |-- flink/
 |   |-- kafka/
 |   |-- kafka-connect/
 |   `-- trino/
 |-- dashboards/
 |-- data/
+|   `-- test/phase3/
 |-- docker/
 |   |-- connect/
 |   `-- flink/
 |-- docs/
 |   |-- architecture.md
 |   |-- cold-path.md
+|   |-- flink-detections.md
 |   |-- phase1-hot-path.md
-|   `-- roadmap.md
+|   |-- roadmap.md
+|   `-- siem_alert_schema.md
 |-- flink/
 |   |-- sql/
+|   |   |-- detections/
 |   |   `-- cold-path/
 |   `-- usrlib/
 |-- parser/
 |-- scripts/
 |   |-- bootstrap-hot-path.sh
 |   |-- bootstrap-cold-path.sh
+|   |-- replay-normalized-jsonl.sh
+|   |-- replay-phase3-synthetic.sh
 |   |-- run-cold-path.sh
+|   |-- run-flink-detections.sh
 |   |-- verify-cold-path.sh
+|   |-- verify-flink-detections.sh
 |   `-- run-flink-sql.sh
 |-- .env.example
 `-- docker-compose.yml
@@ -84,7 +92,7 @@ Create a local environment file before starting the stack:
 cp .env.example .env
 ```
 
-Adjust ports, credentials, bucket names, or catalog settings in `.env` if needed.
+Detection thresholds live in `configs/flink/detection-thresholds.env` and can be edited directly for the lab.
 
 ## Start The Stack
 
@@ -133,9 +141,15 @@ Replay Snort alerts:
 python3 parser/replay_snort_to_kafka.py --input-dir data/raw/snort-alert --topic snort.alert --bootstrap-servers localhost:9092 --limit 1000 --interval-ms 50
 ```
 
+Replay the Phase 3 synthetic normalized test data:
+
+```bash
+bash scripts/replay-phase3-synthetic.sh
+```
+
 ## Run Flink Jobs
 
-Phase 1 alert jobs still read Kafka and write `siem.alerts` back to Kafka:
+Phase 1 sample rules still exist:
 
 ```bash
 docker exec flink-jobmanager /opt/flink/bin/sql-client.sh -f /opt/flink/sql/02_insert_high_priority_snort.sql
@@ -148,34 +162,59 @@ Start the Phase 2 cold-path sink job:
 bash scripts/run-cold-path.sh
 ```
 
-That job:
+Start the Phase 3 detection jobs:
 
-1. ensures the MinIO warehouse bucket exists
-2. creates the Iceberg catalog, namespace, and table if they are missing
-3. creates Kafka source tables for `zeek.conn` and `snort.alert`
-4. submits the streaming insert from Kafka into the Iceberg table
+```bash
+bash scripts/run-flink-detections.sh
+```
 
-## Verify Phase 2
+That script submits six independent streaming detection jobs:
 
-Run the cold-path verification helper:
+1. port scan from Zeek
+2. top talkers from Zeek
+3. possible exfiltration from Zeek
+4. repeated critical Snort alerts
+5. Snort-plus-Zeek correlation
+6. suspicious service/protocol anomalies from Zeek
+
+## Verify Alerts And Cold Storage
+
+Verify the cold path:
 
 ```bash
 bash scripts/verify-cold-path.sh
 ```
 
+Verify detection alerts in Kafka and Elasticsearch:
+
+```bash
+bash scripts/verify-flink-detections.sh
+```
+
 Useful manual checks:
 
 ```bash
+docker exec flink-jobmanager /opt/flink/bin/flink list
+curl http://localhost:8081/jobs/overview
+curl http://localhost:9200/siem-alerts/_search?size=5\&sort=@timestamp:desc
 curl http://localhost:8181/v1/config
-curl http://localhost:8081/jobs
 docker exec minio mc ls --recursive local/warehouse
 ```
 
-Expected result:
+## Phase 3 Rules At A Glance
 
-- MinIO contains Iceberg metadata and Parquet data files under the warehouse bucket
-- `siem.normalized_events` contains records from both `zeek.conn` and `snort.alert`
-- The hot path still indexes events and alerts into Elasticsearch and Kibana as before
+- `04_detect_port_scan_zeek.sql`
+  - detects one source IP hitting many ports or destination IPs in a short event-time window
+- `05_detect_top_talkers_zeek.sql`
+  - detects high-volume source or destination hosts over a tumbling window
+- `06_detect_possible_exfiltration_zeek.sql`
+  - detects sustained outbound bytes from internal to external IPs using an RFC1918 placeholder
+- `07_detect_repeated_critical_snort.sql`
+  - detects repeated high-severity Snort alerts from one source IP in a hop window
+- `08_detect_snort_zeek_correlation.sql`
+  - correlates critical Snort alerts with later high-byte Zeek traffic from the same source IP
+- `09_detect_protocol_anomalies_zeek.sql`
+  - flags explainable service or protocol anomalies such as null service with high bytes or HTTP on unexpected ports
 
 ## Current Scope And Gaps
 
@@ -184,12 +223,12 @@ Implemented now:
 - Kafka-based ingest and replay
 - Elasticsearch/Kibana hot path
 - Iceberg/MinIO cold path written by Flink SQL
-- config-driven local deployment via `.env`
-- a REST-catalog shape that can later be reused by Trino or a multi-node deployment
+- advanced event-time Flink detections writing to `siem.alerts`
+- synthetic validation data for Phase 3 rule checks
 
 Not implemented yet:
 
-- Phase 3 detection rules beyond the existing Phase 1 alert examples
+- Phase 4 reproducibility work beyond the current helper scripts
 - Trino as an active compose service
 - production-grade checkpoint storage, HA catalog backing store, or autoscaling
-- benchmarking and validation harness
+- Phase 5 benchmarking and stress validation
