@@ -16,6 +16,28 @@ require_command() {
   fi
 }
 
+resolve_python_bin() {
+  if [ -n "${PYTHON_BIN:-}" ] && command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    echo "$PYTHON_BIN"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN=python3
+    echo "$PYTHON_BIN"
+    return 0
+  fi
+
+  if command -v python >/dev/null 2>&1; then
+    PYTHON_BIN=python
+    echo "$PYTHON_BIN"
+    return 0
+  fi
+
+  log_error "required command not found: python3 or python"
+  exit 1
+}
+
 load_repo_env() {
   local repo_root="$1"
   local env_file="${ENV_FILE:-$repo_root/.env}"

@@ -9,8 +9,8 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 load_repo_env "$REPO_ROOT"
 require_command docker
-require_command python3
 require_command curl
+PYTHON_BIN="$(resolve_python_bin)"
 
 JOBMANAGER_CONTAINER="${FLINK_JOBMANAGER_CONTAINER:-flink-jobmanager}"
 FLINK_UI_URL="${FLINK_UI_URL:-http://localhost:${FLINK_UI_PORT:-8081}/overview}"
@@ -38,7 +38,7 @@ OUTPUT_FILE="$GENERATED_DIR/run-$(date +%s)-$$.out"
 
 trap 'rm -f "$GENERATED_FILE" "$OUTPUT_FILE"' EXIT
 
-python3 - "$@" > "$GENERATED_FILE" <<'PY'
+"$PYTHON_BIN" - "$@" > "$GENERATED_FILE" <<'PY'
 import os
 import sys
 from pathlib import Path
@@ -50,7 +50,7 @@ for file_path in sys.argv[1:]:
     print(f"-- End {path}")
 PY
 
-docker exec "$JOBMANAGER_CONTAINER" /opt/flink/bin/sql-client.sh -f "$GENERATED_FILE_CONTAINER" 2>&1 | tee "$OUTPUT_FILE"
+MSYS_NO_PATHCONV=1 docker exec "$JOBMANAGER_CONTAINER" /opt/flink/bin/sql-client.sh -f "$GENERATED_FILE_CONTAINER" 2>&1 | tee "$OUTPUT_FILE"
 
 if grep -Eq '\[ERROR\]|Could not execute SQL statement' "$OUTPUT_FILE"; then
   log_error "Flink SQL execution reported an error"

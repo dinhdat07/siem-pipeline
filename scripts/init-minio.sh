@@ -25,7 +25,7 @@ if ! docker container inspect "$MINIO_CONTAINER" >/dev/null 2>&1; then
 fi
 
 while true; do
-  if docker exec "$MINIO_CONTAINER" mc ready local >/dev/null 2>&1; then
+  if MSYS_NO_PATHCONV=1 docker exec "$MINIO_CONTAINER" mc ready local >/dev/null 2>&1; then
     break
   fi
 
@@ -39,7 +39,7 @@ while true; do
 done
 
 log_info "Ensuring MinIO warehouse bucket exists: $MINIO_WAREHOUSE_BUCKET"
-docker exec "$MINIO_CONTAINER" /bin/sh -lc "
+MSYS_NO_PATHCONV=1 docker exec "$MINIO_CONTAINER" /bin/sh -lc "
   mc alias set local http://127.0.0.1:9000 '$MINIO_ROOT_USER' '$MINIO_ROOT_PASSWORD' >/dev/null &&
   mc mb --ignore-existing 'local/$MINIO_WAREHOUSE_BUCKET' >/dev/null
 "

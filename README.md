@@ -7,9 +7,10 @@ Implemented now:
 - Phase 1 hot path: Kafka -> Kafka Connect -> Elasticsearch -> Kibana
 - Phase 2 cold path: Kafka -> Flink SQL -> Iceberg -> MinIO
 - Phase 3 detections: Kafka -> Flink SQL -> `siem.alerts`
+- Phase 3.5 validation: staged smoke tests for infra, hot path, cold path, and detections
 - Kafka remains the central event bus for all ingest, storage, and alerting paths
 
-More detail lives in `docs/architecture.md`, `docs/cold-path.md`, `docs/flink-detections.md`, `docs/phase1-hot-path.md`, and `docs/roadmap.md`.
+More detail lives in `docs/architecture.md`, `docs/cold-path.md`, `docs/flink-detections.md`, `docs/phase1-hot-path.md`, `docs/roadmap.md`, and `docs/validation-smoke-tests.md`.
 
 ## Architecture
 
@@ -42,7 +43,7 @@ Key design decisions:
 |   `-- trino/
 |-- dashboards/
 |-- data/
-|   `-- test/phase3/
+|   `-- test/
 |-- docker/
 |   |-- connect/
 |   `-- flink/
@@ -52,11 +53,13 @@ Key design decisions:
 |   |-- flink-detections.md
 |   |-- phase1-hot-path.md
 |   |-- roadmap.md
+|   |-- validation-smoke-tests.md
 |   `-- siem_alert_schema.md
 |-- flink/
 |   |-- sql/
 |   |   |-- detections/
-|   |   `-- cold-path/
+|   |   |-- cold-path/
+|   |   `-- smoke/
 |   `-- usrlib/
 |-- parser/
 |-- scripts/
@@ -66,6 +69,7 @@ Key design decisions:
 |   |-- replay-phase3-synthetic.sh
 |   |-- run-cold-path.sh
 |   |-- run-flink-detections.sh
+|   |-- smoke/
 |   |-- verify-cold-path.sh
 |   |-- verify-flink-detections.sh
 |   `-- run-flink-sql.sh
@@ -94,13 +98,44 @@ cp .env.example .env
 
 Detection thresholds live in `configs/flink/detection-thresholds.env` and can be edited directly for the lab.
 
+## RAM Guidance
+
+Recommended Docker memory for the full stack:
+
+- `8 GB` minimum for local validation
+- `10-12 GB` is more reliable when Elasticsearch, Kafka Connect, Flink, MinIO, Iceberg REST, and Kibana are all running together
+- below `8 GB`, prefer staged validation and stop services between stages
+
+Heap and Flink process-memory defaults are intentionally conservative in `.env.example`:
+
+- `ELASTICSEARCH_JAVA_OPTS=-Xms512m -Xmx512m`
+- `KAFKA_CONNECT_HEAP_OPTS=-Xms256m -Xmx256m`
+- `FLINK_JOBMANAGER_MEMORY=512m`
+- `FLINK_TASKMANAGER_MEMORY=768m`
+
 ## Start The Stack
 
-Build and start Kafka, Flink, Elasticsearch, Kibana, Kafka Connect, MinIO, and the Iceberg REST catalog:
+Full stack:
 
 ```bash
 docker compose up -d --build
 ```
+
+Low-resource staged startup:
+
+```bash
+docker compose up -d kafka
+docker compose up -d kafka elasticsearch connect flink-jobmanager flink-taskmanager
+docker compose up -d kafka minio minio-init iceberg-rest flink-jobmanager flink-taskmanager
+docker compose up -d kafka elasticsearch kibana connect minio minio-init iceberg-rest flink-jobmanager flink-taskmanager
+```
+
+Those commands map to:
+
+- `kafka` only: infrastructure and topic checks
+- `kafka + elasticsearch + connect + flink`: hot-path validation
+- `kafka + minio + iceberg-rest + flink`: cold-path validation
+- full stack: dashboards plus end-to-end cross-checks
 
 Default local endpoints:
 
@@ -112,6 +147,54 @@ Default local endpoints:
 - MinIO API: `http://localhost:9000`
 - MinIO Console: `http://localhost:9001`
 - Iceberg REST catalog: `http://localhost:8181`
+
+## Phase 3.5 Validation
+
+Phases 1-3 should be treated as complete only after the relevant smoke tests pass.
+
+Staged smoke checks:
+
+```bash
+bash scripts/smoke/run_smoke_tests.sh infra
+bash scripts/smoke/run_smoke_tests.sh hot
+bash scripts/smoke/run_smoke_tests.sh cold
+bash scripts/smoke/run_smoke_tests.sh detect
+```
+
+Full validation:
+
+```bash
+bash scripts/smoke/run_smoke_tests.sh full
+```
+
+If a low-RAM machine is slow but still healthy, raise the smoke wait budget instead of switching straight to the full stack:
+
+```bash
+SMOKE_WAIT_TIMEOUT_SEC=150 bash scripts/smoke/run_smoke_tests.sh hot
+SMOKE_WAIT_TIMEOUT_SEC=150 bash scripts/smoke/run_smoke_tests.sh cold
+```
+
+What the smoke stages verify:
+
+- `infra`
+  - Docker engine is reachable
+  - compose config parses
+  - required stage services are reachable
+- `hot`
+  - Kafka topics exist
+  - normalized Zeek and Snort smoke events reach Elasticsearch through Kafka Connect
+  - a Flink detection emits an alert to `siem.alerts`
+  - that alert reaches Elasticsearch through Kafka Connect
+- `cold`
+  - Kafka topics exist
+  - the Iceberg catalog and table exist
+  - a Flink cold-path job writes tiny smoke data into MinIO-backed Iceberg storage
+  - object-level output is asserted, with row-count verification attempted when available
+- `detect`
+  - all six advanced detection rules emit their expected rule IDs into `siem.alerts`
+  - alert indexing into Elasticsearch is also checked when the hot-path services are already running
+
+More detail, expected rule IDs, and limitations are documented in `docs/validation-smoke-tests.md`.
 
 ## Bootstrap The Paths
 
@@ -194,12 +277,14 @@ bash scripts/verify-flink-detections.sh
 Useful manual checks:
 
 ```bash
-docker exec flink-jobmanager /opt/flink/bin/flink list
+MSYS_NO_PATHCONV=1 docker exec flink-jobmanager /opt/flink/bin/flink list
 curl http://localhost:8081/jobs/overview
 curl http://localhost:9200/siem-alerts/_search?size=5\&sort=@timestamp:desc
 curl http://localhost:8181/v1/config
-docker exec minio mc ls --recursive local/warehouse
+MSYS_NO_PATHCONV=1 docker exec minio mc ls --recursive local/warehouse
 ```
+
+The smoke tests are the preferred validation path for this repository. The older bootstrap and verify scripts remain useful for manual exploration.
 
 ## Phase 3 Rules At A Glance
 
@@ -225,6 +310,7 @@ Implemented now:
 - Iceberg/MinIO cold path written by Flink SQL
 - advanced event-time Flink detections writing to `siem.alerts`
 - synthetic validation data for Phase 3 rule checks
+- staged smoke tests and low-RAM validation guidance
 
 Not implemented yet:
 

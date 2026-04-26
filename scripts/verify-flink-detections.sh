@@ -16,7 +16,7 @@ KAFKA_ALERTS_TOPIC="${KAFKA_ALERTS_TOPIC:-siem.alerts}"
 ES_ALERTS_URL="${ELASTICSEARCH_URL:-http://localhost:9200}/siem-alerts/_search?size=20&sort=@timestamp:desc"
 
 log_info "Recent Kafka alerts"
-docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+MSYS_NO_PATHCONV=1 docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
   --bootstrap-server localhost:9092 \
   --topic "$KAFKA_ALERTS_TOPIC" \
   --from-beginning \

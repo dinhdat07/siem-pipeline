@@ -27,4 +27,4 @@ if [ ! -f "$INPUT_FILE" ]; then
 fi
 
 log_info "Replaying normalized JSONL from $INPUT_FILE into topic $TOPIC"
-docker exec -i "$KAFKA_CONTAINER" "$KAFKA_PRODUCER_BIN" --bootstrap-server "$BOOTSTRAP_SERVER" --topic "$TOPIC" < "$INPUT_FILE"
+MSYS_NO_PATHCONV=1 docker exec -i "$KAFKA_CONTAINER" "$KAFKA_PRODUCER_BIN" --bootstrap-server "$BOOTSTRAP_SERVER" --topic "$TOPIC" < "$INPUT_FILE"

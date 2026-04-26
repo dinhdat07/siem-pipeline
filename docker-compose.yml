@@ -39,7 +39,7 @@ services:
     environment:
       discovery.type: single-node
       xpack.security.enabled: "false"
-      ES_JAVA_OPTS: -Xms1g -Xmx1g
+      ES_JAVA_OPTS: ${ELASTICSEARCH_JAVA_OPTS:--Xms512m -Xmx512m}
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
 
@@ -87,6 +87,7 @@ services:
       CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
       CONNECT_LOG4J_ROOT_LOGLEVEL: INFO
       CONNECT_LOG4J_LOGGERS: org.apache.kafka.connect.runtime.rest=WARN,org.reflections=ERROR
+      KAFKA_HEAP_OPTS: ${KAFKA_CONNECT_HEAP_OPTS:--Xms256m -Xmx256m}
     depends_on:
       kafka:
         condition: service_healthy
@@ -182,6 +183,7 @@ services:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         rest.port: 8081
+        jobmanager.memory.process.size: ${FLINK_JOBMANAGER_MEMORY:-512m}
         taskmanager.numberOfTaskSlots: ${FLINK_TASK_SLOTS:-4}
         parallelism.default: ${FLINK_PARALLELISM:-1}
       AWS_REGION: ${MINIO_REGION:-us-east-1}
@@ -193,8 +195,6 @@ services:
       - ./flink/usrlib:/opt/flink/usrlib
     depends_on:
       kafka:
-        condition: service_healthy
-      iceberg-rest:
         condition: service_healthy
 
   flink-taskmanager:
@@ -213,6 +213,7 @@ services:
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
+        taskmanager.memory.process.size: ${FLINK_TASKMANAGER_MEMORY:-768m}
         taskmanager.numberOfTaskSlots: ${FLINK_TASK_SLOTS:-4}
         parallelism.default: ${FLINK_PARALLELISM:-1}
       AWS_REGION: ${MINIO_REGION:-us-east-1}

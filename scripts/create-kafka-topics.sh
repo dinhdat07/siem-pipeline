@@ -39,7 +39,7 @@ require_env_var() {
 }
 
 run_kafka_topics() {
-  docker exec "$KAFKA_CONTAINER" "$KAFKA_BIN" --bootstrap-server "$BOOTSTRAP_SERVER" "$@"
+  MSYS_NO_PATHCONV=1 docker exec "$KAFKA_CONTAINER" "$KAFKA_BIN" --bootstrap-server "$BOOTSTRAP_SERVER" "$@"
 }
 
 wait_for_kafka() {

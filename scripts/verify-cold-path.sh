@@ -20,7 +20,7 @@ ICEBERG_REST_URL="${ICEBERG_REST_URL:-${ICEBERG_REST_URI_HOST:-http://localhost:
 wait_for_http "$ICEBERG_REST_URL" 180 3 "Iceberg REST catalog"
 
 log_info "Listing Iceberg warehouse objects from MinIO"
-docker exec "$MINIO_CONTAINER" /bin/sh -lc "
+MSYS_NO_PATHCONV=1 docker exec "$MINIO_CONTAINER" /bin/sh -lc "
   mc alias set local http://127.0.0.1:9000 '$MINIO_ROOT_USER' '$MINIO_ROOT_PASSWORD' >/dev/null &&
   mc ls --recursive 'local/$MINIO_WAREHOUSE_BUCKET'
 "
