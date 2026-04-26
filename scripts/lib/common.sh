@@ -29,6 +29,18 @@ load_repo_env() {
   fi
 }
 
+load_optional_env_file() {
+  local env_file="$1"
+
+  if [ -f "$env_file" ]; then
+    log_info "Loading environment from $env_file"
+    set -a
+    # shellcheck disable=SC1090
+    . <(tr -d '\r' < "$env_file")
+    set +a
+  fi
+}
+
 wait_for_http() {
   local url="$1"
   local timeout_sec="${2:-120}"

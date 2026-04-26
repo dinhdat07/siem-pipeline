@@ -22,6 +22,13 @@
         "pipeline": {
           "type": "keyword"
         },
+        "network": {
+          "properties": {
+            "bytes": {
+              "type": "long"
+            }
+          }
+        },
         "event": {
           "properties": {
             "kind": {
@@ -51,6 +58,35 @@
             },
             "name": {
               "type": "keyword"
+            },
+            "category": {
+              "type": "keyword"
+            }
+          }
+        },
+        "alert": {
+          "properties": {
+            "reason": {
+              "type": "text"
+            },
+            "evidence": {
+              "type": "text"
+            },
+            "count": {
+              "type": "long"
+            },
+            "rule_ids": {
+              "type": "keyword"
+            }
+          }
+        },
+        "window": {
+          "properties": {
+            "start": {
+              "type": "date"
+            },
+            "end": {
+              "type": "date"
             }
           }
         },
@@ -65,6 +101,9 @@
           "properties": {
             "ip": {
               "type": "ip"
+            },
+            "port": {
+              "type": "integer"
             }
           }
         },
@@ -74,12 +113,50 @@
               "type": "ip"
             }
           }
+        },
+        "zeek": {
+          "properties": {
+            "scan": {
+              "properties": {
+                "unique_destination_ports": {
+                  "type": "long"
+                },
+                "unique_destination_ips": {
+                  "type": "long"
+                }
+              }
+            },
+            "volume": {
+              "properties": {
+                "direction": {
+                  "type": "keyword"
+                },
+                "total_bytes": {
+                  "type": "long"
+                }
+              }
+            },
+            "connection": {
+              "properties": {
+                "count": {
+                  "type": "long"
+                }
+              }
+            }
+          }
+        },
+        "correlation": {
+          "properties": {
+            "type": {
+              "type": "keyword"
+            }
+          }
         }
       }
     }
   },
   "priority": 500,
   "_meta": {
-    "description": "Phase 1 alerts template for Flink-generated SIEM alerts."
+    "description": "Phase 3 alerts template for Flink-generated SIEM alerts."
   }
 }
