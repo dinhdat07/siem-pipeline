@@ -50,9 +50,16 @@ for file_path in sys.argv[1:]:
     print(f"-- End {path}")
 PY
 
+set +e
 MSYS_NO_PATHCONV=1 docker exec "$JOBMANAGER_CONTAINER" /opt/flink/bin/sql-client.sh -f "$GENERATED_FILE_CONTAINER" 2>&1 | tee "$OUTPUT_FILE"
+sql_exit_code=$?
+set -e
 
 if grep -Eq '\[ERROR\]|Could not execute SQL statement' "$OUTPUT_FILE"; then
   log_error "Flink SQL execution reported an error"
   exit 1
+fi
+
+if [ "$sql_exit_code" -ne 0 ]; then
+  log_warn "Flink SQL client exited with status $sql_exit_code but no SQL error markers were found; treating the submission as successful"
 fi

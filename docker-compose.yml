@@ -34,6 +34,7 @@ services:
     image: ${ELASTICSEARCH_IMAGE:-docker.elastic.co/elasticsearch/elasticsearch:8.17.3}
     container_name: elasticsearch
     hostname: elasticsearch
+    profiles: ["hot"]
     ports:
       - "${ELASTICSEARCH_PORT:-9200}:9200"
     environment:
@@ -47,6 +48,7 @@ services:
     image: ${KIBANA_IMAGE:-docker.elastic.co/kibana/kibana:8.17.3}
     container_name: kibana
     hostname: kibana
+    profiles: ["hot"]
     ports:
       - "${KIBANA_PORT:-5601}:5601"
     environment:
@@ -62,6 +64,7 @@ services:
       dockerfile: docker/connect/Dockerfile
     container_name: connect
     hostname: connect
+    profiles: ["hot"]
     ports:
       - "${KAFKA_CONNECT_PORT:-8083}:8083"
     environment:
@@ -98,6 +101,7 @@ services:
     image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-04-22T22-12-26Z}
     container_name: minio
     hostname: minio
+    profiles: ["cold"]
     ports:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
@@ -123,6 +127,7 @@ services:
   minio-init:
     image: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-04-16T18-13-26Z}
     container_name: minio-init
+    profiles: ["cold"]
     depends_on:
       minio:
         condition: service_healthy
@@ -137,6 +142,7 @@ services:
     image: ${ICEBERG_REST_IMAGE:-apache/iceberg-rest-fixture:1.10.1}
     container_name: iceberg-rest
     hostname: iceberg-rest
+    profiles: ["cold"]
     ports:
       - "${ICEBERG_REST_PORT:-8181}:8181"
     depends_on:
@@ -176,6 +182,7 @@ services:
         HADOOP_VERSION: ${HADOOP_VERSION:-3.4.2}
     container_name: flink-jobmanager
     hostname: flink-jobmanager
+    profiles: ["cold", "detect"]
     command: jobmanager
     ports:
       - "${FLINK_UI_PORT:-8081}:8081"
@@ -209,6 +216,7 @@ services:
         HADOOP_VERSION: ${HADOOP_VERSION:-3.4.2}
     container_name: flink-taskmanager
     hostname: flink-taskmanager
+    profiles: ["cold", "detect"]
     command: taskmanager
     environment:
       FLINK_PROPERTIES: |

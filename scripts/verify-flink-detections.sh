@@ -23,6 +23,11 @@ MSYS_NO_PATHCONV=1 docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
   --max-messages 20 \
   --timeout-ms 10000
 
+if ! curl -fsS "${ELASTICSEARCH_URL:-http://localhost:9200}" >/dev/null 2>&1; then
+  log_warn "Elasticsearch is not reachable, so only Kafka alert verification was performed"
+  exit 0
+fi
+
 log_info "Recent Elasticsearch alerts"
 if [ -n "$ALERT_RULE_FILTER" ]; then
   curl -s -H 'Content-Type: application/json' "$ES_ALERTS_URL" -d "{\"query\":{\"term\":{\"rule.id\":\"$ALERT_RULE_FILTER\"}}}"

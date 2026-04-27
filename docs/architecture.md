@@ -1,76 +1,156 @@
 # Architecture
 
-The lab now has two downstream storage paths and one alerting path that branch from the same Kafka event bus:
+The pipeline keeps Kafka as the central event bus and fans out into three downstream paths:
 
 - hot path: `Kafka -> Kafka Connect -> Elasticsearch -> Kibana`
 - cold path: `Kafka -> Flink SQL -> Iceberg -> MinIO`
 - detection path: `Kafka -> Flink SQL -> siem.alerts -> Kafka Connect -> Elasticsearch`
 
+## Diagram
+
+```mermaid
+flowchart LR
+    ZR[Zeek raw logs] --> ZP[Python parser or normalized replay]
+    SR[Snort raw alerts] --> SP[Python parser or normalized replay]
+
+    ZP --> ZT[(Kafka topic: zeek.conn)]
+    SP --> ST[(Kafka topic: snort.alert)]
+
+    ZT --> KC[Kafka event bus]
+    ST --> KC
+
+    KC --> HP[Kafka Connect sinks]
+    HP --> ES[(Elasticsearch)]
+    ES --> KB[Kibana]
+
+    KC --> FD[Flink SQL detections]
+    FD --> SA[(Kafka topic: siem.alerts)]
+    SA --> HP
+
+    KC --> FC[Flink SQL cold path]
+    FC --> IC[Iceberg REST catalog]
+    IC --> MO[(MinIO object storage)]
+    MO -. future query layer .-> TR[Trino]
+```
+
 ## End-To-End Flow
 
 ```text
-Raw Zeek logs ---> Python parser/replay ----> zeek.conn -----\
-                                                              \
-Raw Snort logs --> Python parser/replay ----> snort.alert ----> Kafka ----> Kafka Connect ----> Elasticsearch ----> Kibana
-                                                              /   |
-Flink SQL detections <---------------------------------------/    +----> Flink SQL sink ----> Iceberg REST catalog ----> MinIO
-   |                                                                                                 |
-   +----> siem.alerts ----> Kafka Connect ----> Elasticsearch alerts index --------------------------+----> future Trino
+Raw Zeek logs ---> parser/replay ----> zeek.conn -----\
+                                                       \
+Raw Snort logs --> parser/replay ----> snort.alert ----> Kafka ----> Kafka Connect ----> Elasticsearch ----> Kibana
+                                                       /   |\
+Flink detections <------------------------------------/    | +----> Flink cold path ----> Iceberg REST ----> MinIO
+   |                                                        |
+   +----> siem.alerts --------------------------------------+----> future Trino queries / downstream consumers
 ```
+
+## Phase Boundaries
+
+### Phase 1 Hot Path
+
+- events flow from `zeek.conn` and `snort.alert` into `siem-events-*`
+- alerts remain in Kafka topic `siem.alerts` and are also indexed into `siem-alerts-*`
+- Kibana provides the demo dashboards and investigation views
+
+### Phase 2 Cold Path
+
+- Flink SQL reads the normalized Kafka topics
+- an Iceberg REST catalog keeps the catalog contract portable
+- MinIO provides S3-compatible object storage for Parquet-backed Iceberg tables
+- the MVP uses one shared Iceberg table partitioned by `event_date` and `event_dataset`
+
+### Phase 3 Detections
+
+Flink SQL implements explainable SIEM detections for:
+
+- Zeek port scans
+- Zeek top talkers
+- possible Zeek exfiltration
+- repeated critical Snort alerts
+- Snort-plus-Zeek correlation
+- Zeek protocol or service anomalies
+
+All rules write back to Kafka topic `siem.alerts`.
+
+## Phase 4 Reproducibility And Demo Shape
+
+Phase 4 adds a reproducible operator flow instead of changing the logical architecture:
+
+- staged Docker Compose profiles
+  - `hot`
+  - `cold`
+  - `detect`
+- a single demo runner: `scripts/demo/run-demo.sh`
+- bundled tiny datasets for quick replay
+- smoke tests that validate the main integration points
+
+That means the same repo can be used in three ways:
+
+1. quick local lab work with a single stage
+2. reproducible server demos with the full stack
+3. targeted validation of a single path when resources are limited
+
+## Service Roles
+
+### Core
+
+- `kafka`
+  - central bus for normalized events and alerts
+
+### Hot path
+
+- `connect`
+  - Elasticsearch sink connectors for `zeek.conn`, `snort.alert`, and `siem.alerts`
+- `elasticsearch`
+  - search and aggregation for investigations
+- `kibana`
+  - dashboards and saved-object-based investigations
+
+### Cold path
+
+- `minio`
+  - object storage for the Iceberg warehouse
+- `minio-init`
+  - one-shot warehouse bucket bootstrap
+- `iceberg-rest`
+  - REST catalog service with a JDBC-backed local catalog
+
+### Processing
+
+- `flink-jobmanager`
+- `flink-taskmanager`
+  - run both detection and cold-path Flink SQL jobs
 
 ## Why This Shape
 
-- Kafka stays central so replay, alerting, hot search, and cold retention all consume the same normalized events.
-- The hot path stays untouched. Elasticsearch is still the fast investigation layer and not the event-system boundary.
-- The cold path uses an Iceberg REST catalog instead of wiring Flink directly to a filesystem-only catalog. That keeps the catalog interface portable when moving to a larger deployment.
-- MinIO provides S3-compatible storage locally while preserving the same object-storage pattern that a multi-node deployment would use later.
-- Phase 3 detection logic stays in Flink SQL so alerting remains close to the stream and easy to reason about.
-
-## Cold-Path Components
-
-- `minio`
-  - S3-compatible object storage for the Iceberg warehouse
-  - exposed locally on `9000` plus console on `9001`
-- `iceberg-rest`
-  - local REST catalog service using the official Iceberg REST fixture image
-  - backed by a JDBC catalog URI, with SQLite for the local lab by default
-  - can later point at PostgreSQL or MySQL without changing Flink SQL catalog usage
-- `flink-jobmanager` and `flink-taskmanager`
-  - custom image includes Kafka, Iceberg, AWS, and Hadoop runtime jars
-  - SQL jobs read Kafka topics and write Parquet-backed Iceberg tables
-
-## Data Model
-
-The cold path lands all normalized raw events into one Iceberg table:
-
-- namespace: `siem`
-- table: `normalized_events`
-- format: Iceberg table format v2
-- file format: Parquet
-- shared columns capture the common ECS-like fields used in both datasets
-- nullable dataset-specific columns keep important Zeek and Snort details without forcing separate tables
-
-This keeps the MVP simple while staying extensible for future datasets.
-
-## Partition Strategy
-
-The table is partitioned by:
-
-- `event_date`
-- `event_dataset`
-
-Why this partitioning:
-
-- `event_date` keeps time pruning straightforward for long-term retention and investigations.
-- `event_dataset` separates the small set of normalized dataset families without creating a large partition explosion.
-- the design avoids hourly partitions or bucketing in the MVP because those would add complexity and small-file risk before they are needed.
+- Kafka is the system boundary and replay point.
+- Flink remains the stream processor instead of writing directly into storage-specific sinks from the parsers.
+- Kafka Connect keeps the Elasticsearch indexing layer separate from Flink.
+- The Iceberg REST catalog makes the cold path more portable than a filesystem-only lab setup.
+- MinIO mirrors the object-storage pattern that a larger deployment would use later.
 
 ## Multi-Node Readiness
 
-The local stack is intentionally simple, but the boundaries are chosen so they can scale later:
+The current setup is still an MVP, but the boundaries are intentionally portable:
 
-- replace the default SQLite JDBC URI behind `iceberg-rest` with PostgreSQL or MySQL
-- point `S3_ENDPOINT_INTERNAL` at external object storage instead of the local MinIO container
-- increase Flink task slots, taskmanagers, and Kafka partitions from `.env`
-- move Flink checkpoint storage to durable shared storage for a real multi-node deployment
-- enable Trino using the REST catalog placeholder config in `configs/trino/catalog/iceberg.properties.example`
+- replace the local SQLite JDBC catalog behind `iceberg-rest` with PostgreSQL or MySQL
+- move `S3_ENDPOINT_INTERNAL` from local MinIO to a shared S3-compatible endpoint
+- increase Kafka partitions and Flink task slots from `.env`
+- move Flink checkpoints to durable shared storage
+- keep the Iceberg catalog contract so future Trino or other engines can query the same tables
+
+## Deployment Notes
+
+The repo now supports staged Compose startup:
+
+- `COMPOSE_PROFILES=hot`
+- `COMPOSE_PROFILES=cold,detect`
+- `COMPOSE_PROFILES=hot,cold,detect`
+
+For an operator-friendly full demo, use:
+
+```bash
+cp .env.example .env
+bash scripts/demo/run-demo.sh full
+```

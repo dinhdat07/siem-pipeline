@@ -39,9 +39,13 @@ Implemented in the current repo state:
 
 ## Phase 4
 
-- Add reproducible bootstrap scripts for the full lab.
-- Add scripts for topics, templates, Iceberg tables, Flink job launch, and demo replay verification.
-- Add a short architecture diagram in `docs/`.
+Implemented in the current repo state:
+
+- Add a single demo runner at `scripts/demo/run-demo.sh`.
+- Support staged modes for `hot-only`, `cold-only`, `detect-only`, and `full`.
+- Add Compose profiles so the full stack is optional.
+- Expand `.env.example` with conservative memory defaults and demo-oriented toggles.
+- Add `docs/demo.md` plus an updated architecture diagram and deployment runbook.
 
 ## Phase 5
 
