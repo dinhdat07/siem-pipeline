@@ -1,0 +1,75 @@
+{
+  "index_patterns": ["siem-benchmark-alerts-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "5s"
+    },
+    "mappings": {
+      "dynamic": true,
+      "date_detection": false,
+      "properties": {
+        "@timestamp": {"type": "date"},
+        "message": {"type": "text"},
+        "benchmark": {
+          "properties": {
+            "id": {"type": "keyword"},
+            "size": {"type": "keyword"},
+            "cycle": {"type": "integer"},
+            "seq": {"type": "long"}
+          }
+        },
+        "event": {
+          "properties": {
+            "kind": {"type": "keyword"},
+            "category": {"type": "keyword"},
+            "type": {"type": "keyword"},
+            "module": {"type": "keyword"},
+            "dataset": {"type": "keyword"},
+            "severity": {"type": "integer"}
+          }
+        },
+        "rule": {
+          "properties": {
+            "id": {"type": "keyword"},
+            "name": {"type": "keyword"},
+            "category": {"type": "keyword"}
+          }
+        },
+        "alert": {
+          "properties": {
+            "reason": {"type": "text"},
+            "evidence": {"type": "text"},
+            "count": {"type": "long"}
+          }
+        },
+        "source": {
+          "properties": {
+            "ip": {"type": "ip"}
+          }
+        },
+        "destination": {
+          "properties": {
+            "ip": {"type": "ip"},
+            "port": {"type": "integer"}
+          }
+        },
+        "network": {
+          "properties": {
+            "bytes": {"type": "long"}
+          }
+        },
+        "related": {
+          "properties": {
+            "ip": {"type": "ip"}
+          }
+        }
+      }
+    }
+  },
+  "priority": 550,
+  "_meta": {
+    "description": "Phase 5 benchmark template for alerts."
+  }
+}

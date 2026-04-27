@@ -1,0 +1,76 @@
+{
+  "index_patterns": ["siem-benchmark-events-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "5s"
+    },
+    "mappings": {
+      "dynamic": true,
+      "date_detection": false,
+      "properties": {
+        "@timestamp": {"type": "date"},
+        "message": {"type": "text"},
+        "benchmark": {
+          "properties": {
+            "id": {"type": "keyword"},
+            "size": {"type": "keyword"},
+            "cycle": {"type": "integer"},
+            "seq": {"type": "long"}
+          }
+        },
+        "event": {
+          "properties": {
+            "id": {"type": "keyword"},
+            "kind": {"type": "keyword"},
+            "category": {"type": "keyword"},
+            "type": {"type": "keyword"},
+            "module": {"type": "keyword"},
+            "dataset": {"type": "keyword"},
+            "severity": {"type": "integer"},
+            "original": {"type": "text"}
+          }
+        },
+        "source": {
+          "properties": {
+            "ip": {"type": "ip"},
+            "port": {"type": "integer"},
+            "bytes": {"type": "long"}
+          }
+        },
+        "destination": {
+          "properties": {
+            "ip": {"type": "ip"},
+            "port": {"type": "integer"},
+            "bytes": {"type": "long"}
+          }
+        },
+        "network": {
+          "properties": {
+            "bytes": {"type": "long"},
+            "packets": {"type": "long"},
+            "transport": {"type": "keyword"},
+            "protocol": {"type": "keyword"}
+          }
+        },
+        "rule": {
+          "properties": {
+            "id": {"type": "keyword"},
+            "name": {"type": "keyword"},
+            "category": {"type": "keyword"}
+          }
+        },
+        "related": {
+          "properties": {
+            "ip": {"type": "ip"}
+          }
+        }
+      }
+    }
+  },
+  "priority": 550,
+  "_meta": {
+    "description": "Phase 5 benchmark template for normalized events."
+  }
+}

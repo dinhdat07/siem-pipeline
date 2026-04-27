@@ -235,8 +235,31 @@ services:
       - ./flink/sql:/opt/flink/sql
       - ./flink/usrlib:/opt/flink/usrlib
 
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    container_name: postgres
+    hostname: postgres
+    profiles: ["benchmark"]
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-siem_benchmark}
+      POSTGRES_USER: ${POSTGRES_USER:-siem}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-siem}
+    command: ["postgres", "-c", "shared_buffers=${POSTGRES_SHARED_BUFFERS:-256MB}"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./benchmark/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-siem} -d ${POSTGRES_DB:-siem_benchmark}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
 volumes:
   kafka_data:
   elasticsearch_data:
   minio_data:
   iceberg_catalog_data:
+  postgres_data:

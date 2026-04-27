@@ -49,5 +49,10 @@ Implemented in the current repo state:
 
 ## Phase 5
 
-- Measure ingest throughput, end-to-end alert latency, Elasticsearch query latency, aggregation latency, and concurrent query behavior.
-- Keep benchmarking scripted and repeatable against the local lab dataset and replay workflow.
+Implemented in the current repo state:
+
+- Add a PostgreSQL benchmark baseline behind the optional `benchmark` Compose profile.
+- Add reproducible benchmark data preparation with `small`, `medium`, and `large` sizing.
+- Add benchmark loaders for Elasticsearch and PostgreSQL.
+- Add query, concurrent, ingest-throughput, and approximate alert-latency benchmark scripts.
+- Add benchmark documentation plus result templates under `benchmark/results/`.

@@ -9,10 +9,11 @@ Implemented phases:
 - Phase 3 detections: `Kafka -> Flink SQL -> siem.alerts`
 - Phase 3.5 smoke validation: staged infrastructure and pipeline checks
 - Phase 4 reproducibility: staged compose profiles, a single demo runner, and server-friendly runbooks
+- Phase 5 benchmark validation: Elasticsearch hot-path and PostgreSQL baseline benchmarking
 
 Kafka remains the central event bus for ingest, storage, and alerting.
 
-More detail lives in `docs/architecture.md`, `docs/demo.md`, `docs/cold-path.md`, `docs/flink-detections.md`, `docs/phase1-hot-path.md`, `docs/roadmap.md`, and `docs/validation-smoke-tests.md`.
+More detail lives in `docs/architecture.md`, `docs/benchmark.md`, `docs/demo.md`, `docs/cold-path.md`, `docs/flink-detections.md`, `docs/phase1-hot-path.md`, `docs/roadmap.md`, and `docs/validation-smoke-tests.md`.
 
 ## Quick Start
 
@@ -34,6 +35,31 @@ That command:
 - prints follow-up verification commands
 
 The demo flow does not require local Python parser dependencies because it replays bundled normalized JSONL files through Kafka.
+
+## Benchmark Quick Start
+
+Phase 5 adds a PostgreSQL comparison baseline and benchmark scripts that are separate from the normal demo flow.
+
+Small benchmark:
+
+```bash
+cp .env.example .env
+pip install -r benchmark/requirements.txt
+bash scripts/benchmark/run_benchmark.sh small
+```
+
+Larger benchmark sizes:
+
+```bash
+bash scripts/benchmark/run_benchmark.sh medium
+bash scripts/benchmark/run_benchmark.sh large
+```
+
+Low-resource mode for laptops or WSL:
+
+```bash
+BENCHMARK_LOW_RESOURCE=1 bash scripts/benchmark/run_benchmark.sh small
+```
 
 ## Demo Modes
 
@@ -76,6 +102,8 @@ The Compose file now supports staged profiles:
   - `minio`, `minio-init`, `iceberg-rest`
 - `detect`
   - `flink-jobmanager`, `flink-taskmanager`
+- `benchmark`
+  - `postgres`
 
 Examples:
 
@@ -83,6 +111,7 @@ Examples:
 COMPOSE_PROFILES=hot docker compose up -d --build
 COMPOSE_PROFILES=cold,detect docker compose up -d --build
 COMPOSE_PROFILES=hot,cold,detect docker compose up -d --build
+COMPOSE_PROFILES=hot,benchmark,detect docker compose up -d --build
 ```
 
 Kafka stays unprofiled because every mode depends on it.
@@ -100,6 +129,14 @@ For reliable demos on a Linux server:
   - minimum: `2 vCPU / 4-6 GB RAM`
 
 The defaults in `.env.example` intentionally keep JVM and Flink memory conservative for laptops and smaller VMs.
+
+For Phase 5 benchmark runs:
+
+- minimum server target: `4 vCPU / 8 GB RAM`
+- recommended server target: `6 vCPU / 12 GB RAM`
+- large benchmark target: `8 vCPU / 16 GB RAM`
+
+Benchmark numbers collected on low-RAM WSL should be treated as approximate only.
 
 ## Useful Commands
 
@@ -122,6 +159,18 @@ bash scripts/smoke/run_smoke_tests.sh infra
 bash scripts/smoke/run_smoke_tests.sh hot
 bash scripts/smoke/run_smoke_tests.sh cold
 bash scripts/smoke/run_smoke_tests.sh detect
+```
+
+Benchmark helpers:
+
+```bash
+bash scripts/benchmark/prepare_benchmark_data.sh small
+bash scripts/benchmark/load_elasticsearch.sh small
+bash scripts/benchmark/load_postgres.sh small
+bash scripts/benchmark/benchmark_queries_elasticsearch.sh small
+bash scripts/benchmark/benchmark_queries_postgres.sh small
+bash scripts/benchmark/benchmark_concurrent.sh small
+bash scripts/benchmark/benchmark_ingest.sh small
 ```
 
 Stop the stack:
@@ -157,6 +206,7 @@ python3 parser/replay_snort_to_kafka.py --input-dir data/raw/snort-alert --topic
 
 ```text
 .
+|-- benchmark/
 |-- configs/
 |   |-- elasticsearch/
 |   |-- flink/
@@ -180,6 +230,7 @@ python3 parser/replay_snort_to_kafka.py --input-dir data/raw/snort-alert --topic
 |   `-- usrlib/
 |-- parser/
 |-- scripts/
+|   |-- benchmark/
 |   |-- demo/
 |   |-- smoke/
 |   `-- *.sh
@@ -200,6 +251,8 @@ bash scripts/verify-flink-detections.sh
 curl http://localhost:8081/jobs/overview
 ```
 
+Benchmark results are written to `benchmark/results/<run-id>/`.
+
 ## Current Scope
 
 Included now:
@@ -208,9 +261,10 @@ Included now:
 - staged Docker Compose startup via profiles
 - smoke-test-based validation helpers
 - bundled small demo datasets for quick server validation
+- benchmark data preparation, Elasticsearch bulk loading, PostgreSQL baseline loading, query latency checks, and concurrent query benchmarks
 
 Not included yet:
 
 - production HA deployment manifests
 - Trino as an active Compose service
-- Phase 5 benchmarking and stress tests
+- production-grade benchmark orchestration beyond the current scripts
