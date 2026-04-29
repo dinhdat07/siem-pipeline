@@ -18,14 +18,29 @@
 - Elasticsearch alert visibility latency: `... ms`
 - PostgreSQL direct loader throughput: `... rows/sec`
 
-## Query Latency Highlights
+## Baseline Comparison
 
 - time-range search: `ES ... ms`, `PG ... ms`
 - top talkers aggregation: `ES ... ms`, `PG ... ms`
 - alert counts by severity: `ES ... ms`, `PG ... ms`
 - message search: `ES ... ms`, `PG ... ms`
 
-## Concurrent Queries
+## Baseline Concurrent Queries
+
+- concurrency 1: `ES p95 ...`, `PG p95 ...`
+- concurrency 5: `ES p95 ...`, `PG p95 ...`
+- concurrency 10: `ES p95 ...`, `PG p95 ...`
+- concurrency 25: `ES p95 ...`, `PG p95 ...`
+
+## ES Showcase Comparison
+
+- phrase latest hits: `ES ... ms`, `PG ... ms`
+- top destination ports after phrase search: `ES ... ms`, `PG ... ms`
+- top source IPs after phrase search: `ES ... ms`, `PG ... ms`
+- phrase-search timeline histogram: `ES ... ms`, `PG ... ms`
+- IP pivot latest hits: `ES ... ms`, `PG ... ms`
+
+## ES Showcase Concurrent Queries
 
 - concurrency 1: `ES p95 ...`, `PG p95 ...`
 - concurrency 5: `ES p95 ...`, `PG p95 ...`
@@ -35,5 +50,6 @@
 ## Notes
 
 - PostgreSQL is the comparison baseline, not the serving layer replacement.
-- Message search results should be interpreted carefully because PostgreSQL uses simple `ILIKE` in this benchmark unless the operator adds a full-text baseline extension.
+- The baseline suite captures general comparison for common SIEM filters, aggregations, and latest-match search.
+- The ES showcase suite is intentionally aimed at search-and-investigation workflows where Elasticsearch is the intended hot-path serving layer.
 - Alert latency is an approximation from replay start to alert visibility in Elasticsearch.

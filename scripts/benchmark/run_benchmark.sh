@@ -55,6 +55,10 @@ queries_es = json.loads((run_dir / 'queries-elasticsearch.json').read_text())
 queries_pg = json.loads((run_dir / 'queries-postgres.json').read_text())
 concurrent_es = json.loads((run_dir / 'concurrent-elasticsearch.json').read_text())
 concurrent_pg = json.loads((run_dir / 'concurrent-postgres.json').read_text())
+showcase_queries_es = json.loads((run_dir / 'queries-showcase-elasticsearch.json').read_text())
+showcase_queries_pg = json.loads((run_dir / 'queries-showcase-postgres.json').read_text())
+showcase_concurrent_es = json.loads((run_dir / 'concurrent-showcase-elasticsearch.json').read_text())
+showcase_concurrent_pg = json.loads((run_dir / 'concurrent-showcase-postgres.json').read_text())
 ingest = json.loads((run_dir / 'ingest.json').read_text())
 
 def lookup(items, name):
@@ -67,6 +71,10 @@ es_top_talkers = lookup(queries_es['queries'], 'top_talkers_by_network_bytes')
 pg_top_talkers = lookup(queries_pg['queries'], 'top_talkers_by_network_bytes')
 es_message = lookup(queries_es['queries'], 'message_search')
 pg_message = lookup(queries_pg['queries'], 'message_search')
+showcase_phrase_es = lookup(showcase_queries_es['queries'], 'phrase_latest_hits')
+showcase_phrase_pg = lookup(showcase_queries_pg['queries'], 'phrase_latest_hits')
+showcase_timeline_es = lookup(showcase_queries_es['queries'], 'search_timeline_histogram')
+showcase_timeline_pg = lookup(showcase_queries_pg['queries'], 'search_timeline_histogram')
 print(f"# Benchmark Summary: {metadata['run_id']}\n")
 print(f"- benchmark size: `{metadata['size']}`")
 print(f"- benchmark input dir: `{metadata['generated_input_dir']}`")
@@ -80,17 +88,26 @@ print(f"- PostgreSQL copy alert throughput: `{load_pg['alert_rows_per_second']} 
 print("## Hot-Path Metrics\n")
 print(f"- Elasticsearch hot-path ingest throughput: `{ingest['hot_path_events_per_second']} events/sec`")
 print(f"- Approximate alert visibility latency: `{ingest['alert_visibility_latency_ms']} ms`\n")
-print("## Query Highlights\n")
+print("## Baseline Comparison\n")
 print(f"- top talkers p95: `ES {es_top_talkers.get('p95_ms', 'n/a')} ms` vs `PG {pg_top_talkers.get('p95_ms', 'n/a')} ms`")
 print(f"- message search p95: `ES {es_message.get('p95_ms', 'n/a')} ms` vs `PG {pg_message.get('p95_ms', 'n/a')} ms`\n")
-print("## Concurrent Query Highlights\n")
+print("## Baseline Concurrent Query Highlights\n")
 for es_row, pg_row in zip(concurrent_es['results'], concurrent_pg['results']):
     print(f"- concurrency {es_row['concurrency']}: `ES p95 {es_row['p95_ms']} ms` vs `PG p95 {pg_row['p95_ms']} ms`")
+
+print("\n## ES Showcase Comparison\n")
+print(f"- phrase latest hits p95: `ES {showcase_phrase_es.get('p95_ms', 'n/a')} ms` vs `PG {showcase_phrase_pg.get('p95_ms', 'n/a')} ms`")
+print(f"- search timeline p95: `ES {showcase_timeline_es.get('p95_ms', 'n/a')} ms` vs `PG {showcase_timeline_pg.get('p95_ms', 'n/a')} ms`\n")
+print("## ES Showcase Concurrent Query Highlights\n")
+for es_row, pg_row in zip(showcase_concurrent_es['results'], showcase_concurrent_pg['results']):
+    print(f"- concurrency {es_row['concurrency']}: `ES p95 {es_row['p95_ms']} ms` vs `PG p95 {pg_row['p95_ms']} ms`")
+
 print("\n## Interpretation Notes\n")
 print("- PostgreSQL is the SQL comparison baseline, not the serving-layer replacement.")
 print("- Bulk loader throughput is not directly equivalent to Kafka-to-Elasticsearch hot-path throughput.")
 print("- Alert latency is measured from replay start to alert visibility in Elasticsearch, so it is an approximation.")
-print("- Message search uses aligned backend-native full-text predicates with latest-match ordering, so it is more comparable than the earlier ILIKE baseline.")
+print("- The baseline suite answers the general Elasticsearch-versus-PostgreSQL comparison for common SIEM filters, aggregations, and latest-match search.")
+print("- The ES showcase suite focuses on search-and-investigation workflows where Elasticsearch is the intended serving layer.")
 PY
 
 log_info "Benchmark run complete. Results are in $BENCHMARK_RUN_DIR"

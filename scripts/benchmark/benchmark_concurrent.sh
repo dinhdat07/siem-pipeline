@@ -11,6 +11,7 @@ wait_for_postgres
 
 "$PYTHON_BIN" "$SCRIPT_DIR/benchmark_tool.py" benchmark-concurrent \
   --backend elasticsearch \
+  --suite baseline \
   --metadata "$BENCHMARK_INPUT_DIR/metadata.json" \
   --output-json "$BENCHMARK_RUN_DIR/concurrent-elasticsearch.json" \
   --levels "$BENCHMARK_CONCURRENCY_LEVELS" \
@@ -19,8 +20,27 @@ wait_for_postgres
 
 "$PYTHON_BIN" "$SCRIPT_DIR/benchmark_tool.py" benchmark-concurrent \
   --backend postgres \
+  --suite baseline \
   --metadata "$BENCHMARK_INPUT_DIR/metadata.json" \
   --output-json "$BENCHMARK_RUN_DIR/concurrent-postgres.json" \
+  --levels "$BENCHMARK_CONCURRENCY_LEVELS" \
+  --queries-per-worker "$BENCHMARK_CONCURRENT_QUERIES_PER_WORKER" \
+  --postgres-dsn "$POSTGRES_URL"
+
+"$PYTHON_BIN" "$SCRIPT_DIR/benchmark_tool.py" benchmark-concurrent \
+  --backend elasticsearch \
+  --suite showcase \
+  --metadata "$BENCHMARK_INPUT_DIR/metadata.json" \
+  --output-json "$BENCHMARK_RUN_DIR/concurrent-showcase-elasticsearch.json" \
+  --levels "$BENCHMARK_CONCURRENCY_LEVELS" \
+  --queries-per-worker "$BENCHMARK_CONCURRENT_QUERIES_PER_WORKER" \
+  --elasticsearch-url "$ELASTICSEARCH_URL"
+
+"$PYTHON_BIN" "$SCRIPT_DIR/benchmark_tool.py" benchmark-concurrent \
+  --backend postgres \
+  --suite showcase \
+  --metadata "$BENCHMARK_INPUT_DIR/metadata.json" \
+  --output-json "$BENCHMARK_RUN_DIR/concurrent-showcase-postgres.json" \
   --levels "$BENCHMARK_CONCURRENCY_LEVELS" \
   --queries-per-worker "$BENCHMARK_CONCURRENT_QUERIES_PER_WORKER" \
   --postgres-dsn "$POSTGRES_URL"

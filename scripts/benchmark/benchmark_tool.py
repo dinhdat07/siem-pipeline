@@ -556,7 +556,7 @@ def load_postgres(args: argparse.Namespace) -> None:
     )
 
 
-def build_query_definitions(metadata: dict[str, Any], backend: str) -> list[QueryDefinition]:
+def build_query_definitions(metadata: dict[str, Any], backend: str, suite: str = "baseline") -> list[QueryDefinition]:
     benchmark_id = metadata["benchmark_id"]
     dataset = metadata["dataset_values"][0]
     source_ip = metadata["sample_source_ip"]
@@ -565,6 +565,161 @@ def build_query_definitions(metadata: dict[str, Any], backend: str) -> list[Quer
     time_mid = metadata["time_range_mid"]
     time_end = metadata["time_range_end"]
     message_term = metadata["message_search_term"]
+
+    if suite == "showcase":
+        pivot_ip = source_ip
+        if backend == "elasticsearch":
+            phrase_filter = {
+                "bool": {
+                    "filter": [
+                        {"term": {"benchmark.id": benchmark_id}},
+                        {"range": {"@timestamp": {"gte": time_start, "lte": time_end}}},
+                    ],
+                    "must": [
+                        {"match_phrase": {"message": message_term}}
+                    ],
+                }
+            }
+            return [
+                QueryDefinition(
+                    "phrase_latest_hits",
+                    "Latest hits for an exact investigation phrase",
+                    "es_search",
+                    EVENT_INDEX,
+                    {
+                        "size": 25,
+                        "track_total_hits": False,
+                        "sort": [{"@timestamp": {"order": "desc"}}],
+                        "query": phrase_filter,
+                    },
+                ),
+                QueryDefinition(
+                    "search_facet_top_destination_ports",
+                    "Top destination ports within phrase search results",
+                    "es_search",
+                    EVENT_INDEX,
+                    {
+                        "size": 0,
+                        "query": phrase_filter,
+                        "aggs": {
+                            "top_destination_ports": {
+                                "terms": {"field": "destination.port", "size": 10}
+                            }
+                        },
+                    },
+                ),
+                QueryDefinition(
+                    "search_facet_top_source_ips",
+                    "Top source IPs within phrase search results",
+                    "es_search",
+                    EVENT_INDEX,
+                    {
+                        "size": 0,
+                        "query": phrase_filter,
+                        "aggs": {
+                            "top_source_ips": {
+                                "terms": {"field": "source.ip", "size": 10}
+                            }
+                        },
+                    },
+                ),
+                QueryDefinition(
+                    "search_timeline_histogram",
+                    "Timeline histogram for phrase search results",
+                    "es_search",
+                    EVENT_INDEX,
+                    {
+                        "size": 0,
+                        "query": phrase_filter,
+                        "aggs": {
+                            "timeline": {
+                                "date_histogram": {
+                                    "field": "@timestamp",
+                                    "fixed_interval": "1m",
+                                    "min_doc_count": 1,
+                                }
+                            }
+                        },
+                    },
+                ),
+                QueryDefinition(
+                    "ip_pivot_latest_hits",
+                    "Latest hits for a pivot IP across source or destination",
+                    "es_search",
+                    EVENT_INDEX,
+                    {
+                        "size": 25,
+                        "track_total_hits": False,
+                        "sort": [{"@timestamp": {"order": "desc"}}],
+                        "query": {
+                            "bool": {
+                                "filter": [
+                                    {"term": {"benchmark.id": benchmark_id}},
+                                    {"range": {"@timestamp": {"gte": time_start, "lte": time_end}}},
+                                ],
+                                "should": [
+                                    {"term": {"source.ip": pivot_ip}},
+                                    {"term": {"destination.ip": pivot_ip}},
+                                ],
+                                "minimum_should_match": 1,
+                            }
+                        },
+                    },
+                ),
+            ]
+
+        return [
+            QueryDefinition(
+                "phrase_latest_hits",
+                "Latest hits for an exact investigation phrase",
+                "pg",
+                "events",
+                (
+                    "SELECT event_id, event_timestamp FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND to_tsvector('simple', COALESCE(message, '')) @@ phraseto_tsquery('simple', %s) ORDER BY event_timestamp DESC LIMIT 25",
+                    [benchmark_id, time_start, time_end, message_term],
+                ),
+            ),
+            QueryDefinition(
+                "search_facet_top_destination_ports",
+                "Top destination ports within phrase search results",
+                "pg",
+                "events",
+                (
+                    "SELECT NULLIF(payload ->> 'destination.port', '')::integer AS destination_port, COUNT(*) FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND payload ? 'destination.port' AND NULLIF(payload ->> 'destination.port', '') IS NOT NULL AND to_tsvector('simple', COALESCE(message, '')) @@ phraseto_tsquery('simple', %s) GROUP BY destination_port ORDER BY COUNT(*) DESC LIMIT 10",
+                    [benchmark_id, time_start, time_end, message_term],
+                ),
+            ),
+            QueryDefinition(
+                "search_facet_top_source_ips",
+                "Top source IPs within phrase search results",
+                "pg",
+                "events",
+                (
+                    "SELECT source_ip, COUNT(*) FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND to_tsvector('simple', COALESCE(message, '')) @@ phraseto_tsquery('simple', %s) GROUP BY source_ip ORDER BY COUNT(*) DESC LIMIT 10",
+                    [benchmark_id, time_start, time_end, message_term],
+                ),
+            ),
+            QueryDefinition(
+                "search_timeline_histogram",
+                "Timeline histogram for phrase search results",
+                "pg",
+                "events",
+                (
+                    "SELECT date_trunc('minute', event_timestamp) AS minute_bucket, COUNT(*) FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND to_tsvector('simple', COALESCE(message, '')) @@ phraseto_tsquery('simple', %s) GROUP BY minute_bucket ORDER BY minute_bucket DESC LIMIT 120",
+                    [benchmark_id, time_start, time_end, message_term],
+                ),
+            ),
+            QueryDefinition(
+                "ip_pivot_latest_hits",
+                "Latest hits for a pivot IP across source or destination",
+                "pg",
+                "events",
+                (
+                    "SELECT event_id, event_timestamp FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND (source_ip = %s OR destination_ip = %s) ORDER BY event_timestamp DESC LIMIT 25",
+                    [benchmark_id, time_start, time_end, pivot_ip, pivot_ip],
+                ),
+            ),
+        ]
 
     if backend == "elasticsearch":
         return [
@@ -664,7 +819,7 @@ def run_pg_query(dsn: str, query: QueryDefinition, connection: Any | None = None
 
 def benchmark_queries(args: argparse.Namespace) -> None:
     metadata = json.loads(Path(args.metadata).read_text(encoding="utf-8"))
-    queries = build_query_definitions(metadata, args.backend)
+    queries = build_query_definitions(metadata, args.backend, args.suite)
     results: list[dict[str, Any]] = []
     pg_connection = None
     if args.backend == "postgres":
@@ -699,7 +854,7 @@ def benchmark_queries(args: argparse.Namespace) -> None:
             pg_connection.close()
 
     output_path = Path(args.output_json)
-    write_json(output_path, {"backend": args.backend, "benchmark_id": metadata["benchmark_id"], "queries": results})
+    write_json(output_path, {"backend": args.backend, "benchmark_id": metadata["benchmark_id"], "suite": args.suite, "queries": results})
     csv_path = output_path.with_suffix(".csv")
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=["query", "avg_ms", "p50_ms", "p95_ms", "p99_ms", "min_ms", "max_ms", "iterations"])
@@ -710,7 +865,7 @@ def benchmark_queries(args: argparse.Namespace) -> None:
 
 def benchmark_concurrent(args: argparse.Namespace) -> None:
     metadata = json.loads(Path(args.metadata).read_text(encoding="utf-8"))
-    queries = build_query_definitions(metadata, args.backend)
+    queries = build_query_definitions(metadata, args.backend, args.suite)
     seed = args.seed
     random.seed(seed)
     levels = [int(item.strip()) for item in args.levels.split(",") if item.strip()]
@@ -751,7 +906,7 @@ def benchmark_concurrent(args: argparse.Namespace) -> None:
         )
 
     output_path = Path(args.output_json)
-    write_json(output_path, {"backend": args.backend, "benchmark_id": metadata["benchmark_id"], "seed": seed, "results": results})
+    write_json(output_path, {"backend": args.backend, "benchmark_id": metadata["benchmark_id"], "suite": args.suite, "seed": seed, "results": results})
     csv_path = output_path.with_suffix(".csv")
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=["concurrency", "request_count", "avg_ms", "p50_ms", "p95_ms", "p99_ms", "min_ms", "max_ms"])
@@ -793,6 +948,7 @@ def main() -> None:
     query.add_argument("--backend", choices=["elasticsearch", "postgres"], required=True)
     query.add_argument("--metadata", required=True)
     query.add_argument("--output-json", required=True)
+    query.add_argument("--suite", choices=["baseline", "showcase"], default="baseline")
     query.add_argument("--iterations", type=int, default=5)
     query.add_argument("--elasticsearch-url")
     query.add_argument("--postgres-dsn")
@@ -802,6 +958,7 @@ def main() -> None:
     concurrent.add_argument("--backend", choices=["elasticsearch", "postgres"], required=True)
     concurrent.add_argument("--metadata", required=True)
     concurrent.add_argument("--output-json", required=True)
+    concurrent.add_argument("--suite", choices=["baseline", "showcase"], default="baseline")
     concurrent.add_argument("--levels", required=True)
     concurrent.add_argument("--queries-per-worker", type=int, default=5)
     concurrent.add_argument("--seed", type=int, default=42)

@@ -5,6 +5,13 @@ Phase 5 evaluates the SIEM pipeline with two goals:
 - measure Elasticsearch performance for SIEM-style hot-path search and alert workflows
 - compare those results against PostgreSQL as a simpler SQL baseline, without replacing Elasticsearch in the architecture
 
+The benchmark now reports two suites:
+
+- `baseline`
+  - a general Elasticsearch-versus-PostgreSQL comparison for common SIEM filters, aggregations, and latest-match text search
+- `showcase`
+  - a search-and-investigation oriented suite that highlights Elasticsearch fit for phrase search, faceting, timelines, and pivot workflows
+
 ## Scope
 
 Elasticsearch remains the primary hot search and investigation layer.
@@ -95,9 +102,11 @@ Trade-off:
 
 - promoted columns keep the baseline fair for common SIEM filters and group-bys
 - JSONB preserves flexibility
-- the benchmark intentionally uses a simple `ILIKE` baseline for message search, because that highlights Elasticsearch's search-oriented strengths more honestly than pretending PostgreSQL is the default full-text serving layer in this project
+- PostgreSQL keeps a simple baseline role even in the showcase suite; it does not add denormalized helper tables or PG-only search extensions beyond benchmark-local full-text support
 
 ## Query Categories
+
+### Baseline suite
 
 Both backends are benchmarked for these logical query classes:
 
@@ -112,9 +121,19 @@ Both backends are benchmarked for these logical query classes:
 - top talkers by total network bytes
 - message search
 
+### ES showcase suite
+
+Both backends are also benchmarked for these search-and-investigation oriented query classes:
+
+- phrase latest hits
+- search facet by destination port
+- search facet by source IP
+- phrase-search timeline histogram
+- IP pivot latest hits
+
 ## Concurrent Query Benchmark
 
-The concurrent runner executes the same logical query mix at configurable concurrency levels:
+The concurrent runner executes the same logical query mix at configurable concurrency levels for both suites:
 
 - default levels: `1, 5, 10, 25`
 - per-level output includes
@@ -190,6 +209,10 @@ Key files:
 - `queries-postgres.json`
 - `concurrent-elasticsearch.json`
 - `concurrent-postgres.json`
+- `queries-showcase-elasticsearch.json`
+- `queries-showcase-postgres.json`
+- `concurrent-showcase-elasticsearch.json`
+- `concurrent-showcase-postgres.json`
 - `ingest.json`
 - `summary.md`
 
@@ -219,5 +242,10 @@ Use Elasticsearch strengths as the main SIEM story for:
 - dashboard-oriented aggregations
 - search-oriented message and investigation workflows
 - direct Kibana integration
+
+Interpret the suites separately:
+
+- `baseline` answers the general comparison question
+- `showcase` answers the search-and-investigation fit question
 
 The benchmark should help explain architectural fit, not just headline speed.

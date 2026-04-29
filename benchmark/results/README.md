@@ -12,6 +12,10 @@ Expected per-run layout:
 - `benchmark/results/<run-id>/queries-postgres.json`
 - `benchmark/results/<run-id>/concurrent-elasticsearch.json`
 - `benchmark/results/<run-id>/concurrent-postgres.json`
+- `benchmark/results/<run-id>/queries-showcase-elasticsearch.json`
+- `benchmark/results/<run-id>/queries-showcase-postgres.json`
+- `benchmark/results/<run-id>/concurrent-showcase-elasticsearch.json`
+- `benchmark/results/<run-id>/concurrent-showcase-postgres.json`
 - `benchmark/results/<run-id>/ingest.json`
 - `benchmark/results/<run-id>/summary.md`
 

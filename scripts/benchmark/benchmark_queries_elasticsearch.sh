@@ -10,7 +10,16 @@ wait_for_benchmark_elasticsearch
 
 "$PYTHON_BIN" "$SCRIPT_DIR/benchmark_tool.py" benchmark-queries \
   --backend elasticsearch \
+  --suite baseline \
   --metadata "$BENCHMARK_INPUT_DIR/metadata.json" \
   --output-json "$BENCHMARK_RUN_DIR/queries-elasticsearch.json" \
+  --iterations "$BENCHMARK_QUERY_ITERATIONS" \
+  --elasticsearch-url "$ELASTICSEARCH_URL"
+
+"$PYTHON_BIN" "$SCRIPT_DIR/benchmark_tool.py" benchmark-queries \
+  --backend elasticsearch \
+  --suite showcase \
+  --metadata "$BENCHMARK_INPUT_DIR/metadata.json" \
+  --output-json "$BENCHMARK_RUN_DIR/queries-showcase-elasticsearch.json" \
   --iterations "$BENCHMARK_QUERY_ITERATIONS" \
   --elasticsearch-url "$ELASTICSEARCH_URL"
