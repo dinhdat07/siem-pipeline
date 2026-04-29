@@ -7,7 +7,7 @@
       "refresh_interval": "5s"
     },
     "mappings": {
-      "dynamic": true,
+      "dynamic": false,
       "date_detection": false,
       "properties": {
         "@timestamp": {"type": "date"},

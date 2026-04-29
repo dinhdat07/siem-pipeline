@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib import error, parse, request
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BENCHMARK_POSTGRES_SCHEMA_PATH = REPO_ROOT / "benchmark" / "postgres" / "init" / "01_schema.sql"
 
 DEFAULT_EVENT_SOURCES = [
     "data/sample/conn-logs/zeek_conn_sample.jsonl",
@@ -76,6 +78,13 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         for row in rows:
             handle.write(json.dumps(row, sort_keys=True))
             handle.write("\n")
+
+
+def ensure_postgres_benchmark_schema(conn: Any) -> None:
+    schema_sql = BENCHMARK_POSTGRES_SCHEMA_PATH.read_text(encoding="utf-8")
+    with conn.cursor() as cur:
+        cur.execute(schema_sql)
+    conn.commit()
 
 
 def percentile(values: list[float], pct: float) -> float:
@@ -312,6 +321,85 @@ def http_bytes(method: str, url: str, payload: bytes) -> tuple[int, str]:
 
 EVENT_INDEX = "siem-benchmark-events"
 ALERT_INDEX = "siem-benchmark-alerts"
+DEFAULT_ES_BULK_CHUNK_BYTES = int(os.environ.get("BENCHMARK_ES_BULK_CHUNK_BYTES", str(8 * 1024 * 1024)))
+DEFAULT_ES_BULK_RETRIES = int(os.environ.get("BENCHMARK_ES_BULK_RETRIES", "3"))
+
+
+def set_index_refresh_interval(base_url: str, index_name: str, refresh_interval: str) -> None:
+    http_json("PUT", f"{base_url}/{index_name}/_settings", {"index": {"refresh_interval": refresh_interval}})
+
+
+def is_retriable_bulk_exception(exc: Exception) -> bool:
+    if isinstance(exc, error.URLError):
+        return True
+    message = str(exc)
+    return any(message.startswith(f"HTTP {status}") for status in (408, 429, 500, 502, 503, 504))
+
+
+def post_bulk_chunk(bulk_url: str, payload: bytes, label: str, chunk_number: int, retries: int) -> None:
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            status, body = http_bytes("POST", bulk_url, payload)
+            if status != 200 or '"errors":true' in body:
+                raise RuntimeError(f"Elasticsearch {label} bulk load failed in chunk {chunk_number}: {body[:1000]}")
+            return
+        except Exception as exc:
+            if attempt > retries + 1 or not is_retriable_bulk_exception(exc):
+                raise
+            time.sleep(min(8.0, 2 ** (attempt - 1)))
+
+
+def upload_bulk_file(
+    base_url: str,
+    index_name: str,
+    bulk_path: Path,
+    label: str,
+    max_chunk_bytes: int = DEFAULT_ES_BULK_CHUNK_BYTES,
+    retries: int = DEFAULT_ES_BULK_RETRIES,
+) -> int:
+    if max_chunk_bytes <= 0:
+        raise ValueError("max_chunk_bytes must be greater than zero")
+
+    bulk_url = f"{base_url}/{index_name}/_bulk?filter_path=errors"
+    chunk: list[bytes] = []
+    chunk_bytes = 0
+    chunk_count = 0
+
+    def flush_chunk() -> None:
+        nonlocal chunk
+        nonlocal chunk_bytes
+        nonlocal chunk_count
+
+        if not chunk:
+            return
+
+        post_bulk_chunk(bulk_url, b"".join(chunk), label, chunk_count + 1, retries)
+        chunk = []
+        chunk_bytes = 0
+        chunk_count += 1
+
+    with bulk_path.open("rb") as handle:
+        while True:
+            action_line = handle.readline()
+            if not action_line:
+                break
+
+            document_line = handle.readline()
+            if not document_line:
+                raise RuntimeError(f"Malformed bulk payload in {bulk_path}: missing document line after action line")
+
+            pair_size = len(action_line) + len(document_line)
+            if chunk and chunk_bytes + pair_size > max_chunk_bytes:
+                flush_chunk()
+
+            chunk.extend((action_line, document_line))
+            chunk_bytes += pair_size
+
+    flush_chunk()
+    http_json("POST", f"{base_url}/{index_name}/_refresh")
+    return chunk_count
 
 
 def load_elasticsearch(args: argparse.Namespace) -> None:
@@ -328,7 +416,12 @@ def load_elasticsearch(args: argparse.Namespace) -> None:
             if "404" not in str(exc):
                 raise
 
-    for alias, concrete in [(EVENT_INDEX, f"{EVENT_INDEX}-000001"), (ALERT_INDEX, f"{ALERT_INDEX}-000001")]:
+    concrete_indices = {
+        EVENT_INDEX: f"{EVENT_INDEX}-000001",
+        ALERT_INDEX: f"{ALERT_INDEX}-000001",
+    }
+
+    for alias, concrete in concrete_indices.items():
         http_json(
             "PUT",
             f"{base_url}/{concrete}",
@@ -339,17 +432,20 @@ def load_elasticsearch(args: argparse.Namespace) -> None:
             },
         )
 
-    started = time.perf_counter()
-    status, body = http_bytes("POST", f"{base_url}/{EVENT_INDEX}/_bulk?refresh=true", events_bulk.read_bytes())
-    if status != 200 or '"errors":true' in body:
-        raise RuntimeError(f"Elasticsearch event bulk load failed: {body[:1000]}")
-    event_duration = time.perf_counter() - started
+    for concrete in concrete_indices.values():
+        set_index_refresh_interval(base_url, concrete, "-1")
 
-    started = time.perf_counter()
-    status, body = http_bytes("POST", f"{base_url}/{ALERT_INDEX}/_bulk?refresh=true", alerts_bulk.read_bytes())
-    if status != 200 or '"errors":true' in body:
-        raise RuntimeError(f"Elasticsearch alert bulk load failed: {body[:1000]}")
-    alert_duration = time.perf_counter() - started
+    try:
+        started = time.perf_counter()
+        event_bulk_chunks = upload_bulk_file(base_url, EVENT_INDEX, events_bulk, "event")
+        event_duration = time.perf_counter() - started
+
+        started = time.perf_counter()
+        alert_bulk_chunks = upload_bulk_file(base_url, ALERT_INDEX, alerts_bulk, "alert")
+        alert_duration = time.perf_counter() - started
+    finally:
+        for concrete in concrete_indices.values():
+            set_index_refresh_interval(base_url, concrete, "5s")
 
     write_json(
         Path(args.output_json),
@@ -358,6 +454,8 @@ def load_elasticsearch(args: argparse.Namespace) -> None:
             "benchmark_id": benchmark_id,
             "event_index": EVENT_INDEX,
             "alert_index": ALERT_INDEX,
+            "event_bulk_chunks": event_bulk_chunks,
+            "alert_bulk_chunks": alert_bulk_chunks,
             "event_bulk_seconds": round(event_duration, 6),
             "alert_bulk_seconds": round(alert_duration, 6),
             "event_rows_per_second": round(metadata["event_count"] / event_duration, 2) if event_duration else 0,
@@ -387,6 +485,7 @@ def load_postgres(args: argparse.Namespace) -> None:
     benchmark_id = metadata["benchmark_id"]
 
     with client.connect() as conn:
+        ensure_postgres_benchmark_schema(conn)
         with conn.cursor() as cur:
             cur.execute("DELETE FROM siem_benchmark.alerts WHERE benchmark_id = %s", (benchmark_id,))
             cur.execute("DELETE FROM siem_benchmark.events WHERE benchmark_id = %s", (benchmark_id,))
@@ -491,7 +590,28 @@ def build_query_definitions(metadata: dict[str, Any], backend: str) -> list[Quer
             QueryDefinition("top_source_ip_by_event_count", "Top source IPs by event count", "es_search", EVENT_INDEX, {"size": 0, "query": {"term": {"benchmark.id": benchmark_id}}, "aggs": {"top_source": {"terms": {"field": "source.ip", "size": 10}}}}),
             QueryDefinition("top_destination_ip_by_event_count", "Top destination IPs by event count", "es_search", EVENT_INDEX, {"size": 0, "query": {"term": {"benchmark.id": benchmark_id}}, "aggs": {"top_destination": {"terms": {"field": "destination.ip", "size": 10}}}}),
             QueryDefinition("top_talkers_by_network_bytes", "Top source IPs by total network bytes", "es_search", EVENT_INDEX, {"size": 0, "query": {"term": {"benchmark.id": benchmark_id}}, "aggs": {"top_talkers": {"terms": {"field": "source.ip", "size": 10}, "aggs": {"total_bytes": {"sum": {"field": "network.bytes"}}}}}}),
-            QueryDefinition("message_search", "Full-text message search", "es_search", EVENT_INDEX, {"size": 25, "query": {"bool": {"filter": [{"term": {"benchmark.id": benchmark_id}}, {"range": {"@timestamp": {"gte": time_start, "lte": time_end}}}], "must": [{"match": {"message": message_term}}]}}}),
+            QueryDefinition(
+                "message_search",
+                "Full-text message search",
+                "es_search",
+                EVENT_INDEX,
+                {
+                    "size": 25,
+                    "track_total_hits": False,
+                    "sort": [{"@timestamp": {"order": "desc"}}],
+                    "query": {
+                        "bool": {
+                            "filter": [
+                                {"term": {"benchmark.id": benchmark_id}},
+                                {"range": {"@timestamp": {"gte": time_start, "lte": time_end}}},
+                            ],
+                            "must": [
+                                {"match": {"message": {"query": message_term, "operator": "and"}}}
+                            ],
+                        }
+                    },
+                },
+            ),
         ]
 
     return [
@@ -504,7 +624,16 @@ def build_query_definitions(metadata: dict[str, Any], backend: str) -> list[Quer
         QueryDefinition("top_source_ip_by_event_count", "Top source IPs by event count", "pg", "events", ("SELECT source_ip, COUNT(*) FROM siem_benchmark.events WHERE benchmark_id = %s GROUP BY source_ip ORDER BY COUNT(*) DESC LIMIT 10", [benchmark_id])),
         QueryDefinition("top_destination_ip_by_event_count", "Top destination IPs by event count", "pg", "events", ("SELECT destination_ip, COUNT(*) FROM siem_benchmark.events WHERE benchmark_id = %s GROUP BY destination_ip ORDER BY COUNT(*) DESC LIMIT 10", [benchmark_id])),
         QueryDefinition("top_talkers_by_network_bytes", "Top source IPs by total network bytes", "pg", "events", ("SELECT source_ip, SUM(COALESCE(network_bytes, 0)) AS total_bytes FROM siem_benchmark.events WHERE benchmark_id = %s GROUP BY source_ip ORDER BY total_bytes DESC LIMIT 10", [benchmark_id])),
-        QueryDefinition("message_search", "Message search with ILIKE baseline", "pg", "events", ("SELECT event_id FROM siem_benchmark.events WHERE benchmark_id = %s AND message ILIKE %s ORDER BY event_timestamp DESC LIMIT 25", [benchmark_id, f"%{message_term}%"])),
+        QueryDefinition(
+            "message_search",
+            "Full-text message search",
+            "pg",
+            "events",
+            (
+                "SELECT event_id FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND to_tsvector('simple', COALESCE(message, '')) @@ plainto_tsquery('simple', %s) ORDER BY event_timestamp DESC LIMIT 25",
+                [benchmark_id, time_start, time_end, message_term],
+            ),
+        ),
     ]
 
 
@@ -640,7 +769,7 @@ def main() -> None:
     prepare.add_argument("--output-dir", required=True)
     prepare.add_argument("--benchmark-id")
     prepare.add_argument("--alert-every", type=int, default=5)
-    prepare.add_argument("--message-search-term", default="connection")
+    prepare.add_argument("--message-search-term", default=os.environ.get("BENCHMARK_MESSAGE_SEARCH_TERM", "ssl tcp connection"))
     prepare.add_argument("--event-source", action="append")
     prepare.set_defaults(func=prepare_data)
 

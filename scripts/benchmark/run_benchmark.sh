@@ -90,7 +90,7 @@ print("\n## Interpretation Notes\n")
 print("- PostgreSQL is the SQL comparison baseline, not the serving-layer replacement.")
 print("- Bulk loader throughput is not directly equivalent to Kafka-to-Elasticsearch hot-path throughput.")
 print("- Alert latency is measured from replay start to alert visibility in Elasticsearch, so it is an approximation.")
-print("- Message search uses Elasticsearch full-text search and PostgreSQL `ILIKE`, which intentionally highlights search-oriented trade-offs.")
+print("- Message search uses aligned backend-native full-text predicates with latest-match ordering, so it is more comparable than the earlier ILIKE baseline.")
 PY
 
 log_info "Benchmark run complete. Results are in $BENCHMARK_RUN_DIR"

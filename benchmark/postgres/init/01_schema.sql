@@ -37,6 +37,8 @@ CREATE INDEX IF NOT EXISTS idx_benchmark_events_benchmark_id
   ON siem_benchmark.events (benchmark_id);
 CREATE INDEX IF NOT EXISTS idx_benchmark_events_payload_gin
   ON siem_benchmark.events USING GIN (payload jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_benchmark_events_message_fts
+  ON siem_benchmark.events USING GIN (to_tsvector('simple', COALESCE(message, '')));
 
 CREATE TABLE IF NOT EXISTS siem_benchmark.alerts (
   id BIGSERIAL PRIMARY KEY,
@@ -75,3 +77,5 @@ CREATE INDEX IF NOT EXISTS idx_benchmark_alerts_benchmark_id
   ON siem_benchmark.alerts (benchmark_id);
 CREATE INDEX IF NOT EXISTS idx_benchmark_alerts_payload_gin
   ON siem_benchmark.alerts USING GIN (payload jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_benchmark_alerts_message_fts
+  ON siem_benchmark.alerts USING GIN (to_tsvector('simple', COALESCE(message, '')));
