@@ -128,6 +128,26 @@ CREATE TEMPORARY TABLE siem_alerts_detection_sink (
 CREATE TEMPORARY VIEW zeek_detection_enriched AS
 SELECT
   *,
-  REGEXP_LIKE(`source.ip`, '${DETECTION_INTERNAL_NETWORK_REGEX}') AS source_is_internal,
-  REGEXP_LIKE(`destination.ip`, '${DETECTION_INTERNAL_NETWORK_REGEX}') AS destination_is_internal
+  (
+    `source.ip` LIKE '10.%'
+    OR `source.ip` LIKE '192.168.%'
+    OR `source.ip` LIKE '172.16.%'
+    OR `source.ip` LIKE '172.17.%'
+    OR `source.ip` LIKE '172.18.%'
+    OR `source.ip` LIKE '172.19.%'
+    OR `source.ip` LIKE '172.2_.%'
+    OR `source.ip` LIKE '172.30.%'
+    OR `source.ip` LIKE '172.31.%'
+  ) AS source_is_internal,
+  (
+    `destination.ip` LIKE '10.%'
+    OR `destination.ip` LIKE '192.168.%'
+    OR `destination.ip` LIKE '172.16.%'
+    OR `destination.ip` LIKE '172.17.%'
+    OR `destination.ip` LIKE '172.18.%'
+    OR `destination.ip` LIKE '172.19.%'
+    OR `destination.ip` LIKE '172.2_.%'
+    OR `destination.ip` LIKE '172.30.%'
+    OR `destination.ip` LIKE '172.31.%'
+  ) AS destination_is_internal
 FROM zeek_detection_src;

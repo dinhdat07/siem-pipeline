@@ -1,7 +1,7 @@
 -- Detect simple per-event protocol and service anomalies from Zeek.
 INSERT INTO siem_alerts_detection_sink
 SELECT
-  CAST(event_time AS STRING) AS `@timestamp`,
+  REPLACE(DATE_FORMAT(event_time, 'yyyy-MM-dd HH:mm:ss.SSS'), ' ', 'T') AS `@timestamp`,
   'alert' AS `event.kind`,
   ARRAY['network'] AS `event.category`,
   ARRAY['indicator', 'anomaly'] AS `event.type`,

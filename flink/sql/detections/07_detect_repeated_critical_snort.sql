@@ -1,7 +1,7 @@
 -- Detect repeated high-severity Snort alerts from the same source IP in a short event-time hop window.
 INSERT INTO siem_alerts_detection_sink
 SELECT
-  CAST(window_end AS STRING) AS `@timestamp`,
+  REPLACE(DATE_FORMAT(window_end, 'yyyy-MM-dd HH:mm:ss.SSS'), ' ', 'T') AS `@timestamp`,
   'alert' AS `event.kind`,
   ARRAY['intrusion_detection'] AS `event.category`,
   ARRAY['indicator'] AS `event.type`,

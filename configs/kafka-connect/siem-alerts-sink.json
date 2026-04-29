@@ -5,6 +5,7 @@
   "connection.url": "http://elasticsearch:9200",
   "key.ignore": "true",
   "schema.ignore": "true",
+  "behavior.on.malformed.documents": "IGNORE",
   "behavior.on.null.values": "IGNORE",
   "write.method": "INSERT",
   "max.in.flight.requests": "1",

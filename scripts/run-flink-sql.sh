@@ -7,7 +7,11 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/common.sh"
 
+ORIGINAL_KAFKA_SCAN_STARTUP_MODE="${KAFKA_SCAN_STARTUP_MODE:-}"
 load_repo_env "$REPO_ROOT"
+if [ -n "$ORIGINAL_KAFKA_SCAN_STARTUP_MODE" ]; then
+  export KAFKA_SCAN_STARTUP_MODE="$ORIGINAL_KAFKA_SCAN_STARTUP_MODE"
+fi
 require_command docker
 require_command curl
 PYTHON_BIN="$(resolve_python_bin)"

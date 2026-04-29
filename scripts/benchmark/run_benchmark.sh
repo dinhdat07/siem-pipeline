@@ -42,10 +42,11 @@ bash "$SCRIPT_DIR/benchmark_queries_postgres.sh" "$BENCHMARK_SIZE"
 bash "$SCRIPT_DIR/benchmark_concurrent.sh" "$BENCHMARK_SIZE"
 bash "$SCRIPT_DIR/benchmark_ingest.sh" "$BENCHMARK_SIZE"
 
-"$PYTHON_BIN" - <<PY > "$BENCHMARK_RUN_DIR/summary.md"
+"$PYTHON_BIN" - <<'PY' > "$BENCHMARK_RUN_DIR/summary.md"
 import json
+import os
 from pathlib import Path
-run_dir = Path(${BENCHMARK_RUN_DIR@Q})
+run_dir = Path(os.environ["BENCHMARK_RUN_DIR"])
 metadata = json.loads((run_dir / 'metadata.json').read_text())
 prepare = json.loads((run_dir / 'prepare-summary.json').read_text())
 load_es = json.loads((run_dir / 'load-elasticsearch.json').read_text())

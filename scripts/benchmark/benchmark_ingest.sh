@@ -86,12 +86,12 @@ wait_for_es_count_json() {
   done
 }
 
-before_events="$(es_count_query "siem-events" "benchmark.id" "$benchmark_id")"
+before_events="$(es_count_query "siem-events" "benchmark.id.keyword" "$benchmark_id")"
 replay_started_ns="$(date +%s%N)"
 bash "$REPO_ROOT/scripts/replay-normalized-jsonl.sh" zeek.conn "$BENCHMARK_INPUT_DIR/events.zeek.jsonl"
 bash "$REPO_ROOT/scripts/replay-normalized-jsonl.sh" snort.alert "$BENCHMARK_INPUT_DIR/events.snort.jsonl"
 after_events_target=$((before_events + event_count))
-actual_events="$(wait_for_es_count "siem-events" "benchmark.id" "$benchmark_id" "$after_events_target")"
+actual_events="$(wait_for_es_count "siem-events" "benchmark.id.keyword" "$benchmark_id" "$after_events_target")"
 replay_finished_ns="$(date +%s%N)"
 throughput_ms="$($PYTHON_BIN -c 'import sys; start=int(sys.argv[1]); end=int(sys.argv[2]); print(max((end-start)/1_000_000, 1.0))' "$replay_started_ns" "$replay_finished_ns")"
 hot_path_events_per_sec="$($PYTHON_BIN -c 'import sys; rows=float(sys.argv[1]); elapsed_ms=float(sys.argv[2]); print(round(rows/(elapsed_ms/1000.0), 2))' "$event_count" "$throughput_ms")"

@@ -1,7 +1,7 @@
 -- Detect a critical Snort alert followed by unusual Zeek traffic from the same source IP within a short event-time interval.
 INSERT INTO siem_alerts_detection_sink
 SELECT
-  CAST(z.event_time AS STRING) AS `@timestamp`,
+  REPLACE(DATE_FORMAT(z.event_time, 'yyyy-MM-dd HH:mm:ss.SSS'), ' ', 'T') AS `@timestamp`,
   'alert' AS `event.kind`,
   ARRAY['intrusion_detection', 'network'] AS `event.category`,
   ARRAY['indicator', 'correlation'] AS `event.type`,

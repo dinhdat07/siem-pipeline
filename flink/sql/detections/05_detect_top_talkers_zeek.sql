@@ -1,7 +1,7 @@
 -- Detect high-volume hosts from Zeek by aggregating bytes in event-time tumbling windows.
 INSERT INTO siem_alerts_detection_sink
 SELECT
-  CAST(window_end AS STRING) AS `@timestamp`,
+  REPLACE(DATE_FORMAT(window_end, 'yyyy-MM-dd HH:mm:ss.SSS'), ' ', 'T') AS `@timestamp`,
   'alert' AS `event.kind`,
   ARRAY['network'] AS `event.category`,
   ARRAY['indicator'] AS `event.type`,

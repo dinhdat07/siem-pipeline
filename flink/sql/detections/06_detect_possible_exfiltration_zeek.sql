@@ -1,7 +1,7 @@
 -- Detect sustained outbound traffic from RFC1918-style internal hosts to external destinations.
 INSERT INTO siem_alerts_detection_sink
 SELECT
-  CAST(window_end AS STRING) AS `@timestamp`,
+  REPLACE(DATE_FORMAT(window_end, 'yyyy-MM-dd HH:mm:ss.SSS'), ' ', 'T') AS `@timestamp`,
   'alert' AS `event.kind`,
   ARRAY['network', 'data_access'] AS `event.category`,
   ARRAY['indicator'] AS `event.type`,
