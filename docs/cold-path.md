@@ -33,7 +33,7 @@ Cold-path SQL files live in `flink/sql/cold-path/`:
 - `05_insert_normalized_events.sql`
   - inserts both datasets into the Iceberg table with a shared schema
 - `90_verify_iceberg_events.sql`
-  - queries record counts and Iceberg metadata tables for verification
+  - optional SQL verification for record counts and Iceberg metadata tables when the Flink cluster has free slots
 
 ## Schema Shape
 
@@ -103,10 +103,18 @@ Trade-off:
 
 ## Verification
 
-The verification helper checks both storage layers:
+The default verification helper checks both storage layers without submitting a new Flink batch job:
 
 - MinIO object listing confirms Parquet data and Iceberg metadata files exist
-- Flink SQL queries confirm rows, snapshots, and Iceberg file metadata exist
+- Iceberg REST metadata confirms current snapshot state, total records, and data-file counts
+
+Optional deeper verification with Flink SQL:
+
+```bash
+VERIFY_COLD_PATH_USE_FLINK_SQL=1 bash scripts/verify-cold-path.sh
+```
+
+Use the SQL mode only when the cluster has free slots. In `full` demo mode, the streaming jobs can occupy all local slots, so metadata-based verification is the more reliable default.
 
 Additional manual checks:
 

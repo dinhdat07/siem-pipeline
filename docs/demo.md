@@ -168,6 +168,12 @@ curl http://localhost:8181/v1/config
 bash scripts/verify-cold-path.sh
 ```
 
+`verify-cold-path.sh` defaults to metadata-based verification so it still works in `full` mode even when Flink is using all local slots. If you want the extra SQL check and the cluster has spare capacity:
+
+```bash
+VERIFY_COLD_PATH_USE_FLINK_SQL=1 bash scripts/verify-cold-path.sh
+```
+
 ### Detections
 
 - [ ] Flink jobs are listed
