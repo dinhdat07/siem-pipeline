@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/benchmark_lib.sh"
 
 ensure_benchmark_dirs
-wait_for_container kafka "Kafka broker" "$BENCHMARK_WAIT_TIMEOUT_SEC" "$BENCHMARK_WAIT_INTERVAL_SEC"
+wait_for_container "${KAFKA_CONTAINER:-kafka}" "Kafka broker" "$BENCHMARK_WAIT_TIMEOUT_SEC" "$BENCHMARK_WAIT_INTERVAL_SEC"
 wait_for_benchmark_elasticsearch
 wait_for_benchmark_connect
 wait_for_benchmark_flink
@@ -16,6 +16,7 @@ bash "$REPO_ROOT/scripts/create-kafka-topics.sh"
 bash "$REPO_ROOT/scripts/bootstrap-elasticsearch.sh"
 bash "$REPO_ROOT/scripts/register-kafka-connectors.sh"
 wait_for_connector_running "siem-events-sink" "$CONNECT_URL" "$BENCHMARK_WAIT_TIMEOUT_SEC" "$BENCHMARK_WAIT_INTERVAL_SEC"
+wait_for_connector_running "siem-snort-events-sink" "$CONNECT_URL" "$BENCHMARK_WAIT_TIMEOUT_SEC" "$BENCHMARK_WAIT_INTERVAL_SEC"
 wait_for_connector_running "siem-alerts-sink" "$CONNECT_URL" "$BENCHMARK_WAIT_TIMEOUT_SEC" "$BENCHMARK_WAIT_INTERVAL_SEC"
 
 metadata_json="$BENCHMARK_INPUT_DIR/metadata.json"

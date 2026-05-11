@@ -210,7 +210,14 @@ Expected examples include alerts such as:
 Start the jobs:
 
 ```bash
-bash scripts/run-flink-detections.sh
+bash scripts/run-flink-sql.sh \
+  flink/sql/detections/00_create_detection_base.sql \
+  flink/sql/detections/04_detect_port_scan_zeek.sql \
+  flink/sql/detections/05_detect_top_talkers_zeek.sql \
+  flink/sql/detections/06_detect_possible_exfiltration_zeek.sql \
+  flink/sql/detections/07_detect_repeated_critical_snort.sql \
+  flink/sql/detections/08_detect_snort_zeek_correlation.sql \
+  flink/sql/detections/09_detect_protocol_anomalies_zeek.sql
 ```
 
 Replay the synthetic validation data:

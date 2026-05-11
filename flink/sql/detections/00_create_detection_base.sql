@@ -1,3 +1,5 @@
+SET 'table.exec.source.idle-timeout' = '5 s';
+
 CREATE TEMPORARY TABLE zeek_detection_src (
   `@timestamp` TIMESTAMP_LTZ(3),
   `event.kind` STRING,

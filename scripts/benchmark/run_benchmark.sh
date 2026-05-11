@@ -28,7 +28,7 @@ if is_truthy "${BENCHMARK_START_STACK:-1}"; then
   benchmark_compose_up "hot,benchmark,detect" kafka elasticsearch connect postgres flink-jobmanager flink-taskmanager
 fi
 
-wait_for_container kafka "Kafka broker" "$BENCHMARK_WAIT_TIMEOUT_SEC" "$BENCHMARK_WAIT_INTERVAL_SEC"
+wait_for_container "${KAFKA_CONTAINER:-kafka}" "Kafka broker" "$BENCHMARK_WAIT_TIMEOUT_SEC" "$BENCHMARK_WAIT_INTERVAL_SEC"
 wait_for_benchmark_elasticsearch
 wait_for_postgres
 wait_for_benchmark_connect
@@ -71,8 +71,12 @@ es_top_talkers = lookup(queries_es['queries'], 'top_talkers_by_network_bytes')
 pg_top_talkers = lookup(queries_pg['queries'], 'top_talkers_by_network_bytes')
 es_message = lookup(queries_es['queries'], 'message_search')
 pg_message = lookup(queries_pg['queries'], 'message_search')
-showcase_phrase_es = lookup(showcase_queries_es['queries'], 'phrase_latest_hits')
-showcase_phrase_pg = lookup(showcase_queries_pg['queries'], 'phrase_latest_hits')
+showcase_phrase_es = lookup(showcase_queries_es['queries'], 'multi_field_latest_hits') or lookup(showcase_queries_es['queries'], 'phrase_latest_hits')
+showcase_phrase_pg = lookup(showcase_queries_pg['queries'], 'multi_field_latest_hits') or lookup(showcase_queries_pg['queries'], 'phrase_latest_hits')
+showcase_prefix_es = lookup(showcase_queries_es['queries'], 'autocomplete_latest_hits')
+showcase_prefix_pg = lookup(showcase_queries_pg['queries'], 'autocomplete_latest_hits')
+showcase_fuzzy_es = lookup(showcase_queries_es['queries'], 'fuzzy_latest_hits')
+showcase_fuzzy_pg = lookup(showcase_queries_pg['queries'], 'fuzzy_latest_hits')
 showcase_timeline_es = lookup(showcase_queries_es['queries'], 'search_timeline_histogram')
 showcase_timeline_pg = lookup(showcase_queries_pg['queries'], 'search_timeline_histogram')
 print(f"# Benchmark Summary: {metadata['run_id']}\n")
@@ -96,7 +100,9 @@ for es_row, pg_row in zip(concurrent_es['results'], concurrent_pg['results']):
     print(f"- concurrency {es_row['concurrency']}: `ES p95 {es_row['p95_ms']} ms` vs `PG p95 {pg_row['p95_ms']} ms`")
 
 print("\n## ES Showcase Comparison\n")
-print(f"- phrase latest hits p95: `ES {showcase_phrase_es.get('p95_ms', 'n/a')} ms` vs `PG {showcase_phrase_pg.get('p95_ms', 'n/a')} ms`")
+print(f"- multi-field latest hits p95: `ES {showcase_phrase_es.get('p95_ms', 'n/a')} ms` vs `PG {showcase_phrase_pg.get('p95_ms', 'n/a')} ms`")
+print(f"- autocomplete prefix latest hits p95: `ES {showcase_prefix_es.get('p95_ms', 'n/a')} ms` vs `PG {showcase_prefix_pg.get('p95_ms', 'n/a')} ms`")
+print(f"- fuzzy latest hits p95: `ES {showcase_fuzzy_es.get('p95_ms', 'n/a')} ms` vs `PG {showcase_fuzzy_pg.get('p95_ms', 'n/a')} ms`")
 print(f"- search timeline p95: `ES {showcase_timeline_es.get('p95_ms', 'n/a')} ms` vs `PG {showcase_timeline_pg.get('p95_ms', 'n/a')} ms`\n")
 print("## ES Showcase Concurrent Query Highlights\n")
 for es_row, pg_row in zip(showcase_concurrent_es['results'], showcase_concurrent_pg['results']):
@@ -109,5 +115,9 @@ print("- Alert latency is measured from replay start to alert visibility in Elas
 print("- The baseline suite answers the general Elasticsearch-versus-PostgreSQL comparison for common SIEM filters, aggregations, and latest-match search.")
 print("- The ES showcase suite focuses on search-and-investigation workflows where Elasticsearch is the intended serving layer.")
 PY
+
+"$PYTHON_BIN" "$SCRIPT_DIR/compare_runs.py" \
+  --run-dir "$BENCHMARK_RUN_DIR" \
+  --output "$BENCHMARK_RUN_DIR/es-vs-postgres-showcase.md"
 
 log_info "Benchmark run complete. Results are in $BENCHMARK_RUN_DIR"

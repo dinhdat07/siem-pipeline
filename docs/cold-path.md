@@ -92,7 +92,10 @@ Trade-off:
 5. Start the cold-path insert job:
 
    ```bash
-   bash scripts/run-cold-path.sh
+   bash scripts/run-flink-sql.sh \
+     flink/sql/cold-path/01_create_iceberg_catalog.sql \
+     flink/sql/cold-path/04_create_kafka_sources.sql \
+     flink/sql/cold-path/05_insert_normalized_events.sql
    ```
 
 6. Verify objects and table metadata:

@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ENV_FILE="$REPO_ROOT/configs/kafka/topics.env"
+ENV_FILE="${KAFKA_TOPICS_ENV_FILE:-$REPO_ROOT/configs/kafka/topics.env}"
 ROOT_ENV_FILE="${ENV_FILE_OVERRIDE:-$REPO_ROOT/.env}"
 
 KAFKA_CONTAINER="${KAFKA_CONTAINER:-kafka}"

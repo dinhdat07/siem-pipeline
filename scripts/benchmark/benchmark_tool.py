@@ -33,6 +33,15 @@ SIZE_MULTIPLIERS = {
     "small": 1,
     "medium": 10,
     "large": 50,
+    "single-1m": None,
+    "distributed-1m": None,
+    "distributed-3m": None,
+}
+
+SIZE_TARGET_EVENT_COUNTS = {
+    "single-1m": 1_000_000,
+    "distributed-1m": 1_000_000,
+    "distributed-3m": 3_000_000,
 }
 
 
@@ -65,6 +74,14 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def iter_jsonl(path: Path):
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if line:
+                yield json.loads(line)
+
+
 def write_json(path: Path, payload: Any) -> None:
     ensure_dir(path.parent)
     with path.open("w", encoding="utf-8") as handle:
@@ -78,6 +95,11 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         for row in rows:
             handle.write(json.dumps(row, sort_keys=True))
             handle.write("\n")
+
+
+def write_jsonl_row(handle: Any, row: dict[str, Any]) -> None:
+    handle.write(json.dumps(row, sort_keys=True))
+    handle.write("\n")
 
 
 def ensure_postgres_benchmark_schema(conn: Any) -> None:
@@ -128,6 +150,26 @@ def benchmark_tag(record: dict[str, Any], benchmark_id: str, size: str, cycle: i
     record["benchmark.cycle"] = cycle
     record["benchmark.seq"] = seq
     record.setdefault("event.id", f"{benchmark_id}-event-{seq}")
+
+
+def make_prefix_search_term(message_term: str) -> str:
+    words = [word for word in message_term.split() if word]
+    if not words:
+        return message_term
+    if len(words) >= 3 and len(words[-1]) >= 3:
+        words[-1] = words[-1][:3]
+        return " ".join(words)
+    return " ".join(words[:1])
+
+
+def make_fuzzy_search_term(message_term: str) -> str:
+    words = [word for word in message_term.split() if word]
+    if not words:
+        return message_term
+    last = words[-1]
+    if len(last) > 1:
+        words[-1] = last[:-1]
+    return " ".join(words)
 
 
 def derive_rule_family(record: dict[str, Any]) -> tuple[str, str, str, int]:
@@ -207,67 +249,114 @@ def prepare_data(args: argparse.Namespace) -> None:
     if not base_events:
         die("no benchmark source events were loaded")
 
-    multiplier = SIZE_MULTIPLIERS[args.size]
-    benchmark_id = args.benchmark_id or f"phase5-{args.size}"
-    events: list[dict[str, Any]] = []
-    alerts: list[dict[str, Any]] = []
-    seq = 0
+    explicit_target = args.target_events if args.target_events and args.target_events > 0 else None
+    target_event_count = explicit_target or SIZE_TARGET_EVENT_COUNTS.get(args.size)
+    multiplier = SIZE_MULTIPLIERS.get(args.size)
+    if target_event_count is None:
+        assert multiplier is not None
+        target_event_count = len(base_events) * multiplier
+    else:
+        multiplier = math.ceil(target_event_count / len(base_events))
 
-    for cycle in range(multiplier):
-        cycle_offset = timedelta(minutes=cycle)
-        for event in base_events:
+    benchmark_id = args.benchmark_id or f"phase5-{args.size}"
+    seq = 0
+    alert_count = 0
+    dataset_values: set[str] = set()
+    sample_source_ip = None
+    sample_destination_ip = None
+    start_ts = None
+    end_ts = None
+    first_event: dict[str, Any] | None = None
+
+    paths = {
+        "events": output_dir / "events.jsonl",
+        "zeek": output_dir / "events.zeek.jsonl",
+        "snort": output_dir / "events.snort.jsonl",
+        "alerts": output_dir / "alerts.jsonl",
+        "events_bulk": output_dir / "events.bulk.ndjson",
+        "alerts_bulk": output_dir / "alerts.bulk.ndjson",
+    }
+
+    for path in paths.values():
+        ensure_dir(path.parent)
+
+    with (
+        paths["events"].open("w", encoding="utf-8") as events_handle,
+        paths["zeek"].open("w", encoding="utf-8") as zeek_handle,
+        paths["snort"].open("w", encoding="utf-8") as snort_handle,
+        paths["alerts"].open("w", encoding="utf-8") as alerts_handle,
+        paths["events_bulk"].open("w", encoding="utf-8") as events_bulk_handle,
+        paths["alerts_bulk"].open("w", encoding="utf-8") as alerts_bulk_handle,
+    ):
+        while seq < target_event_count:
+            cycle = seq // len(base_events)
+            cycle_offset = timedelta(minutes=cycle)
+            event = base_events[seq % len(base_events)]
             seq += 1
             cloned = json.loads(json.dumps(event))
             shifted_ts = parse_ts(cloned["@timestamp"]) + cycle_offset
             cloned["@timestamp"] = isoformat_z(shifted_ts)
             benchmark_tag(cloned, benchmark_id, args.size, cycle, seq)
-            events.append(cloned)
+
+            if first_event is None:
+                first_event = cloned
+            event_ts = parse_ts(cloned["@timestamp"])
+            start_ts = event_ts if start_ts is None else min(start_ts, event_ts)
+            end_ts = event_ts if end_ts is None else max(end_ts, event_ts)
+            if sample_source_ip is None and cloned.get("source.ip"):
+                sample_source_ip = cloned.get("source.ip")
+            if sample_destination_ip is None and cloned.get("destination.ip"):
+                sample_destination_ip = cloned.get("destination.ip")
+            if cloned.get("event.dataset"):
+                dataset_values.add(cloned["event.dataset"])
+
+            write_jsonl_row(events_handle, cloned)
+            if cloned.get("event.dataset") == "zeek.conn":
+                write_jsonl_row(zeek_handle, cloned)
+            if cloned.get("event.dataset") == "snort.alert":
+                write_jsonl_row(snort_handle, cloned)
+
+            events_bulk_handle.write(json.dumps({"index": {"_id": cloned["event.id"]}}))
+            events_bulk_handle.write("\n")
+            events_bulk_handle.write(json.dumps(cloned, sort_keys=True))
+            events_bulk_handle.write("\n")
+
             if seq % max(1, args.alert_every) == 0:
-                alerts.append(build_alert(cloned, benchmark_id, args.size, cycle, seq))
+                alert = build_alert(cloned, benchmark_id, args.size, cycle, seq)
+                write_jsonl_row(alerts_handle, alert)
+                alerts_bulk_handle.write(json.dumps({"index": {"_id": alert["event.id"]}}))
+                alerts_bulk_handle.write("\n")
+                alerts_bulk_handle.write(json.dumps(alert, sort_keys=True))
+                alerts_bulk_handle.write("\n")
+                alert_count += 1
 
-    if not alerts:
-        alerts.append(build_alert(events[0], benchmark_id, args.size, 0, 1))
+        if alert_count == 0 and first_event is not None:
+            alert = build_alert(first_event, benchmark_id, args.size, 0, 1)
+            write_jsonl_row(alerts_handle, alert)
+            alerts_bulk_handle.write(json.dumps({"index": {"_id": alert["event.id"]}}))
+            alerts_bulk_handle.write("\n")
+            alerts_bulk_handle.write(json.dumps(alert, sort_keys=True))
+            alerts_bulk_handle.write("\n")
+            alert_count = 1
 
-    zeek_events = [row for row in events if row.get("event.dataset") == "zeek.conn"]
-    snort_events = [row for row in events if row.get("event.dataset") == "snort.alert"]
-
-    write_jsonl(output_dir / "events.jsonl", events)
-    write_jsonl(output_dir / "events.zeek.jsonl", zeek_events)
-    write_jsonl(output_dir / "events.snort.jsonl", snort_events)
-    write_jsonl(output_dir / "alerts.jsonl", alerts)
-
-    with (output_dir / "events.bulk.ndjson").open("w", encoding="utf-8") as handle:
-        for row in events:
-            handle.write(json.dumps({"index": {"_id": row["event.id"]}}))
-            handle.write("\n")
-            handle.write(json.dumps(row, sort_keys=True))
-            handle.write("\n")
-
-    with (output_dir / "alerts.bulk.ndjson").open("w", encoding="utf-8") as handle:
-        for row in alerts:
-            handle.write(json.dumps({"index": {"_id": row["event.id"]}}))
-            handle.write("\n")
-            handle.write(json.dumps(row, sort_keys=True))
-            handle.write("\n")
-
-    sample_source_ip = next((row.get("source.ip") for row in events if row.get("source.ip")), None)
-    sample_destination_ip = next((row.get("destination.ip") for row in events if row.get("destination.ip")), None)
-    dataset_values = sorted({row.get("event.dataset") for row in events if row.get("event.dataset")})
-    start_ts = min(parse_ts(row["@timestamp"]) for row in events)
-    end_ts = max(parse_ts(row["@timestamp"]) for row in events)
+    assert start_ts is not None
+    assert end_ts is not None
     mid_ts = start_ts + (end_ts - start_ts) / 2
 
     metadata = {
         "benchmark_id": benchmark_id,
         "size": args.size,
         "multiplier": multiplier,
-        "event_count": len(events),
-        "alert_count": len(alerts),
+        "target_event_count": target_event_count,
+        "event_count": seq,
+        "alert_count": alert_count,
         "source_files": [str(path) for path in event_sources],
-        "dataset_values": dataset_values,
+        "dataset_values": sorted(dataset_values),
         "sample_source_ip": sample_source_ip,
         "sample_destination_ip": sample_destination_ip,
         "message_search_term": args.message_search_term,
+        "autocomplete_search_term": make_prefix_search_term(args.message_search_term),
+        "fuzzy_search_term": make_fuzzy_search_term(args.message_search_term),
         "time_range_start": isoformat_z(start_ts),
         "time_range_mid": isoformat_z(mid_ts),
         "time_range_end": isoformat_z(end_ts),
@@ -279,8 +368,9 @@ def prepare_data(args: argparse.Namespace) -> None:
         {
             "benchmark_id": benchmark_id,
             "size": args.size,
-            "event_count": len(events),
-            "alert_count": len(alerts),
+            "target_event_count": target_event_count,
+            "event_count": seq,
+            "alert_count": alert_count,
             "skipped_without_timestamp": skipped_without_timestamp,
             "output_dir": str(output_dir),
         },
@@ -420,12 +510,21 @@ def load_elasticsearch(args: argparse.Namespace) -> None:
         EVENT_INDEX: f"{EVENT_INDEX}-000001",
         ALERT_INDEX: f"{ALERT_INDEX}-000001",
     }
+    index_settings = {
+        "number_of_shards": int(os.environ.get("BENCHMARK_ES_SHARDS", "1")),
+        "number_of_replicas": int(os.environ.get("BENCHMARK_ES_REPLICAS", "0")),
+    }
+    include_node_names = os.environ.get("BENCHMARK_ES_INCLUDE_NODE_NAMES", "").strip()
+    if include_node_names:
+        # Pin benchmark indices to a chosen subset of ES nodes for fair node-scaling tests.
+        index_settings["index.routing.allocation.include._name"] = include_node_names
 
     for alias, concrete in concrete_indices.items():
         http_json(
             "PUT",
             f"{base_url}/{concrete}",
             {
+                "settings": index_settings,
                 "aliases": {
                     alias: {"is_write_index": True}
                 }
@@ -460,6 +559,7 @@ def load_elasticsearch(args: argparse.Namespace) -> None:
             "alert_bulk_seconds": round(alert_duration, 6),
             "event_rows_per_second": round(metadata["event_count"] / event_duration, 2) if event_duration else 0,
             "alert_rows_per_second": round(metadata["alert_count"] / alert_duration, 2) if alert_duration else 0,
+            "allocation_include_node_names": include_node_names.split(",") if include_node_names else [],
         },
     )
 
@@ -479,8 +579,8 @@ class PostgresClient:
 
 def load_postgres(args: argparse.Namespace) -> None:
     client = PostgresClient(args.postgres_dsn)
-    events = read_jsonl(Path(args.events_jsonl))
-    alerts = read_jsonl(Path(args.alerts_jsonl))
+    events_path = Path(args.events_jsonl)
+    alerts_path = Path(args.alerts_jsonl)
     metadata = json.loads(Path(args.metadata).read_text(encoding="utf-8"))
     benchmark_id = metadata["benchmark_id"]
 
@@ -496,7 +596,7 @@ def load_postgres(args: argparse.Namespace) -> None:
             with cur.copy(
                 "COPY siem_benchmark.events (benchmark_id, event_id, event_timestamp, event_dataset, event_module, event_kind, event_severity, source_ip, destination_ip, rule_id, rule_name, network_bytes, message, event_original, payload) FROM STDIN"
             ) as copy:
-                for row in events:
+                for row in iter_jsonl(events_path):
                     copy.write_row((
                         benchmark_id,
                         row.get("event.id"),
@@ -522,7 +622,7 @@ def load_postgres(args: argparse.Namespace) -> None:
             with cur.copy(
                 "COPY siem_benchmark.alerts (benchmark_id, alert_id, event_timestamp, event_dataset, event_module, event_kind, event_severity, source_ip, destination_ip, rule_id, rule_name, network_bytes, message, event_original, payload) FROM STDIN"
             ) as copy:
-                for row in alerts:
+                for row in iter_jsonl(alerts_path):
                     copy.write_row((
                         benchmark_id,
                         row.get("event.id"),
@@ -565,9 +665,20 @@ def build_query_definitions(metadata: dict[str, Any], backend: str, suite: str =
     time_mid = metadata["time_range_mid"]
     time_end = metadata["time_range_end"]
     message_term = metadata["message_search_term"]
+    prefix_term = metadata.get("autocomplete_search_term", message_term)
+    fuzzy_term = metadata.get("fuzzy_search_term", message_term)
 
     if suite == "showcase":
         pivot_ip = source_ip
+        combined_text_fields = ["message", "event.original"]
+        combined_text_clause = {
+            "combined_fields": {
+                "query": message_term,
+                "fields": combined_text_fields,
+                "operator": "and",
+            }
+        }
+        combined_text_sql = "to_tsvector('simple', COALESCE(message, '') || ' ' || COALESCE(event_original, '')) @@ plainto_tsquery('simple', %s)"
         if backend == "elasticsearch":
             phrase_filter = {
                 "bool": {
@@ -576,14 +687,14 @@ def build_query_definitions(metadata: dict[str, Any], backend: str, suite: str =
                         {"range": {"@timestamp": {"gte": time_start, "lte": time_end}}},
                     ],
                     "must": [
-                        {"match_phrase": {"message": message_term}}
+                        combined_text_clause,
                     ],
                 }
             }
             return [
                 QueryDefinition(
-                    "phrase_latest_hits",
-                    "Latest hits for an exact investigation phrase",
+                    "multi_field_latest_hits",
+                    "Latest hits for a combined message and raw-event investigation search",
                     "es_search",
                     EVENT_INDEX,
                     {
@@ -594,8 +705,70 @@ def build_query_definitions(metadata: dict[str, Any], backend: str, suite: str =
                     },
                 ),
                 QueryDefinition(
+                    "autocomplete_latest_hits",
+                    "Latest hits for a search-as-you-type prefix investigation",
+                    "es_search",
+                    EVENT_INDEX,
+                    {
+                        "size": 25,
+                        "track_total_hits": False,
+                        "sort": [{"@timestamp": {"order": "desc"}}],
+                        "query": {
+                            "bool": {
+                                "filter": [
+                                    {"term": {"benchmark.id": benchmark_id}},
+                                    {"range": {"@timestamp": {"gte": time_start, "lte": time_end}}},
+                                ],
+                                "must": [
+                                    {
+                                        "multi_match": {
+                                            "query": prefix_term,
+                                            "type": "bool_prefix",
+                                            "fields": [
+                                                "message.autocomplete",
+                                                "message.autocomplete._2gram",
+                                                "message.autocomplete._3gram",
+                                            ],
+                                        }
+                                    }
+                                ],
+                            }
+                        },
+                    },
+                ),
+                QueryDefinition(
+                    "fuzzy_latest_hits",
+                    "Latest hits for a fuzzy typo-tolerant investigation",
+                    "es_search",
+                    EVENT_INDEX,
+                    {
+                        "size": 25,
+                        "track_total_hits": False,
+                        "sort": [{"@timestamp": {"order": "desc"}}],
+                        "query": {
+                            "bool": {
+                                "filter": [
+                                    {"term": {"benchmark.id": benchmark_id}},
+                                    {"range": {"@timestamp": {"gte": time_start, "lte": time_end}}},
+                                ],
+                                "must": [
+                                    {
+                                        "match": {
+                                            "message": {
+                                                "query": fuzzy_term,
+                                                "fuzziness": "AUTO",
+                                                "prefix_length": 1,
+                                            }
+                                        }
+                                    }
+                                ],
+                            }
+                        },
+                    },
+                ),
+                QueryDefinition(
                     "search_facet_top_destination_ports",
-                    "Top destination ports within phrase search results",
+                    "Top destination ports within combined search results",
                     "es_search",
                     EVENT_INDEX,
                     {
@@ -610,7 +783,7 @@ def build_query_definitions(metadata: dict[str, Any], backend: str, suite: str =
                 ),
                 QueryDefinition(
                     "search_facet_top_source_ips",
-                    "Top source IPs within phrase search results",
+                    "Top source IPs within combined search results",
                     "es_search",
                     EVENT_INDEX,
                     {
@@ -625,7 +798,7 @@ def build_query_definitions(metadata: dict[str, Any], backend: str, suite: str =
                 ),
                 QueryDefinition(
                     "search_timeline_histogram",
-                    "Timeline histogram for phrase search results",
+                    "Timeline histogram for combined search results",
                     "es_search",
                     EVENT_INDEX,
                     {
@@ -670,42 +843,62 @@ def build_query_definitions(metadata: dict[str, Any], backend: str, suite: str =
 
         return [
             QueryDefinition(
-                "phrase_latest_hits",
-                "Latest hits for an exact investigation phrase",
+                "multi_field_latest_hits",
+                "Latest hits for a combined message and raw-event investigation search",
                 "pg",
                 "events",
                 (
-                    "SELECT event_id, event_timestamp FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND to_tsvector('simple', COALESCE(message, '')) @@ phraseto_tsquery('simple', %s) ORDER BY event_timestamp DESC LIMIT 25",
+                    f"SELECT event_id, event_timestamp FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND {combined_text_sql} ORDER BY event_timestamp DESC LIMIT 25",
                     [benchmark_id, time_start, time_end, message_term],
                 ),
             ),
             QueryDefinition(
-                "search_facet_top_destination_ports",
-                "Top destination ports within phrase search results",
+                "autocomplete_latest_hits",
+                "Latest hits for a search-as-you-type prefix investigation",
                 "pg",
                 "events",
                 (
-                    "SELECT NULLIF(payload ->> 'destination.port', '')::integer AS destination_port, COUNT(*) FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND payload ? 'destination.port' AND NULLIF(payload ->> 'destination.port', '') IS NOT NULL AND to_tsvector('simple', COALESCE(message, '')) @@ phraseto_tsquery('simple', %s) GROUP BY destination_port ORDER BY COUNT(*) DESC LIMIT 10",
+                    "SELECT event_id, event_timestamp FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND lower(message) LIKE lower(%s) || '%%' ORDER BY event_timestamp DESC LIMIT 25",
+                    [benchmark_id, time_start, time_end, prefix_term],
+                ),
+            ),
+            QueryDefinition(
+                "fuzzy_latest_hits",
+                "Latest hits for a fuzzy typo-tolerant investigation",
+                "pg",
+                "events",
+                (
+                    "SELECT event_id, event_timestamp FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND lower(message) %% lower(%s) ORDER BY similarity(lower(message), lower(%s)) DESC, event_timestamp DESC LIMIT 25",
+                    [benchmark_id, time_start, time_end, fuzzy_term, fuzzy_term],
+                ),
+            ),
+            QueryDefinition(
+                "search_facet_top_destination_ports",
+                "Top destination ports within combined search results",
+                "pg",
+                "events",
+                (
+                    f"SELECT NULLIF(payload ->> 'destination.port', '')::integer AS destination_port, COUNT(*) FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND payload ? 'destination.port' AND NULLIF(payload ->> 'destination.port', '') IS NOT NULL AND {combined_text_sql} GROUP BY destination_port ORDER BY COUNT(*) DESC LIMIT 10",
                     [benchmark_id, time_start, time_end, message_term],
                 ),
             ),
             QueryDefinition(
                 "search_facet_top_source_ips",
-                "Top source IPs within phrase search results",
+                "Top source IPs within combined search results",
                 "pg",
                 "events",
                 (
-                    "SELECT source_ip, COUNT(*) FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND to_tsvector('simple', COALESCE(message, '')) @@ phraseto_tsquery('simple', %s) GROUP BY source_ip ORDER BY COUNT(*) DESC LIMIT 10",
+                    f"SELECT source_ip, COUNT(*) FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND {combined_text_sql} GROUP BY source_ip ORDER BY COUNT(*) DESC LIMIT 10",
                     [benchmark_id, time_start, time_end, message_term],
                 ),
             ),
             QueryDefinition(
                 "search_timeline_histogram",
-                "Timeline histogram for phrase search results",
+                "Timeline histogram for combined search results",
                 "pg",
                 "events",
                 (
-                    "SELECT date_trunc('minute', event_timestamp) AS minute_bucket, COUNT(*) FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND to_tsvector('simple', COALESCE(message, '')) @@ phraseto_tsquery('simple', %s) GROUP BY minute_bucket ORDER BY minute_bucket DESC LIMIT 120",
+                    f"SELECT date_trunc('minute', event_timestamp) AS minute_bucket, COUNT(*) FROM siem_benchmark.events WHERE benchmark_id = %s AND event_timestamp BETWEEN %s AND %s AND {combined_text_sql} GROUP BY minute_bucket ORDER BY minute_bucket DESC LIMIT 120",
                     [benchmark_id, time_start, time_end, message_term],
                 ),
             ),
@@ -923,6 +1116,7 @@ def main() -> None:
     prepare.add_argument("--size", choices=sorted(SIZE_MULTIPLIERS), required=True)
     prepare.add_argument("--output-dir", required=True)
     prepare.add_argument("--benchmark-id")
+    prepare.add_argument("--target-events", type=int, default=int(os.environ.get("BENCHMARK_TARGET_EVENTS", "0")))
     prepare.add_argument("--alert-every", type=int, default=5)
     prepare.add_argument("--message-search-term", default=os.environ.get("BENCHMARK_MESSAGE_SEARCH_TERM", "ssl tcp connection"))
     prepare.add_argument("--event-source", action="append")

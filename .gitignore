@@ -2,6 +2,7 @@ data/raw/
 .venv/
 .env
 flink/sql/.generated/
+configs/kafka-connect/.generated/
 __pycache__/
 *.py[cod]
 

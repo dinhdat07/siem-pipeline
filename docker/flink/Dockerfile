@@ -26,4 +26,6 @@ RUN mkdir -p ./lib/kafka ./lib/iceberg ./lib/hadoop \
     && curl -fLo ./lib/hadoop/hadoop-client-api-${HADOOP_VERSION}.jar \
       https://repo.maven.apache.org/maven2/org/apache/hadoop/hadoop-client-api/${HADOOP_VERSION}/hadoop-client-api-${HADOOP_VERSION}.jar \
     && curl -fLo ./lib/hadoop/hadoop-client-runtime-${HADOOP_VERSION}.jar \
-      https://repo.maven.apache.org/maven2/org/apache/hadoop/hadoop-client-runtime/${HADOOP_VERSION}/hadoop-client-runtime-${HADOOP_VERSION}.jar
+      https://repo.maven.apache.org/maven2/org/apache/hadoop/hadoop-client-runtime/${HADOOP_VERSION}/hadoop-client-runtime-${HADOOP_VERSION}.jar \
+    && mkdir -p ./plugins/flink-s3-fs-hadoop \
+    && cp ./opt/flink-s3-fs-hadoop-*.jar ./plugins/flink-s3-fs-hadoop/

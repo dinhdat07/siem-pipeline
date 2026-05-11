@@ -10,7 +10,7 @@ The benchmark now reports two suites:
 - `baseline`
   - a general Elasticsearch-versus-PostgreSQL comparison for common SIEM filters, aggregations, and latest-match text search
 - `showcase`
-  - a search-and-investigation oriented suite that highlights Elasticsearch fit for phrase search, faceting, timelines, and pivot workflows
+  - a search-and-investigation oriented suite that highlights Elasticsearch fit for multi-field search, faceting, timelines, and pivot workflows
 
 ## Scope
 
@@ -64,6 +64,12 @@ Benchmark sizes:
   - multiplier `10`
 - `large`
   - multiplier `50`
+- `single-1m`
+  - exactly `1,000,000` events for single-node baseline comparison
+- `distributed-1m`
+  - exactly `1,000,000` events for distributed apples-to-apples comparison
+- `distributed-3m`
+  - exactly `3,000,000` events for the recommended distributed headline run on the current 3-node cluster
 
 The generated alerts are deterministic synthetic benchmark alerts derived from the normalized events. That keeps the Elasticsearch and PostgreSQL query benchmark corpus identical. The separate alert-latency measurement still uses the actual Flink detection pipeline.
 
@@ -125,10 +131,10 @@ Both backends are benchmarked for these logical query classes:
 
 Both backends are also benchmarked for these search-and-investigation oriented query classes:
 
-- phrase latest hits
+- multi-field latest hits across `message` and `event.original`
 - search facet by destination port
 - search facet by source IP
-- phrase-search timeline histogram
+- search timeline histogram over multi-field search results
 - IP pivot latest hits
 
 ## Concurrent Query Benchmark
@@ -178,6 +184,58 @@ bash scripts/benchmark/run_benchmark.sh medium
 bash scripts/benchmark/run_benchmark.sh large
 ```
 
+Distributed showcase runs:
+
+```bash
+bash scripts/benchmark/run_benchmark.sh single-1m
+bash deploy/distributed/siemctl.sh benchmark distributed-1m
+bash deploy/distributed/siemctl.sh benchmark distributed-3m
+```
+
+The current 3-node hardware is safest at `1M-3M` events. Treat larger datasets as stress tests because PostgreSQL temp files, Elasticsearch disk watermarks, and swap pressure can dominate results.
+
+After a single-node and distributed run complete, generate an apples-to-apples comparison:
+
+```bash
+python3 scripts/benchmark/compare_runs.py \
+  --single-run-dir benchmark/results/<single-1m-run> \
+  --distributed-run-dir benchmark/results/<distributed-1m-run> \
+  --output benchmark/results/single-vs-distributed.md
+```
+
+To show Elasticsearch scalability across multiple dataset sizes, generate an ES-only report from two or more completed runs:
+
+```bash
+python3 scripts/benchmark/es_scaling_report.py \
+  --run-dir benchmark/results/<distributed-1m-run> \
+  --run-dir benchmark/results/<distributed-3m-run> \
+  --output benchmark/results/es-scalability.md
+```
+
+The distributed showcase wrapper now writes that file automatically after it finishes all requested sizes:
+
+```bash
+bash scripts/benchmark/run_distributed_showcase.sh distributed-1m distributed-3m
+```
+
+To show Elasticsearch scale-out by node count on the existing 3-node cluster, run the ES node benchmark. This keeps the cluster alive and only pins the benchmark indices to `1`, `2`, then `3` ES nodes:
+
+```bash
+bash deploy/distributed/siemctl.sh benchmark-es-nodes distributed-1m
+```
+
+That command writes:
+
+```bash
+benchmark/results/es-node-scalability-distributed-1m.md
+```
+
+You can limit the topologies if you only want a partial run:
+
+```bash
+BENCHMARK_NODE_COUNTS=1,3 bash scripts/benchmark/run_es_node_scaling.sh distributed-1m
+```
+
 Low-resource run:
 
 ```bash
@@ -215,6 +273,8 @@ Key files:
 - `concurrent-showcase-postgres.json`
 - `ingest.json`
 - `summary.md`
+- `es-vs-postgres-showcase.md`
+- `benchmark/results/es-scalability.md`
 
 ## Recommended Hardware
 
@@ -247,5 +307,17 @@ Interpret the suites separately:
 
 - `baseline` answers the general comparison question
 - `showcase` answers the search-and-investigation fit question
+
+Interpret the ES-only scalability report separately from the ES-vs-PG report:
+
+- `ES ingest scaling` shows whether bulk load and hot-path throughput keep pace as the dataset grows
+- `ES search scaling` shows whether p95 search latency grows slower than data volume for SIEM investigation queries
+- `ES concurrent search scaling` shows how stable p95 latency remains as both dataset size and user concurrency rise
+
+Interpret the node-scalability report separately again:
+
+- it keeps dataset size fixed and varies only the number of Elasticsearch nodes serving the benchmark indices
+- it is the fairest way to show ES scale-out on this cluster without disrupting Kafka, Flink, PostgreSQL, or the side-by-side ecommerce deployment
+- `node efficiency` near `1x` means the speedup is close to linear with node-count growth
 
 The benchmark should help explain architectural fit, not just headline speed.

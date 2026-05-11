@@ -61,6 +61,27 @@ Low-resource mode for laptops or WSL:
 BENCHMARK_LOW_RESOURCE=1 bash scripts/benchmark/run_benchmark.sh small
 ```
 
+## Distributed Deployment
+
+This repo also includes a 3-node Tailscale deployment path for the current lab cluster:
+
+```bash
+bash deploy/distributed/siemctl.sh tune
+bash deploy/distributed/siemctl.sh up
+bash deploy/distributed/siemctl.sh bootstrap
+bash deploy/distributed/siemctl.sh validate
+```
+
+The distributed runbook is in `docs/distributed-deployment.md`. It uses Kafka RF=3, a 3-node Elasticsearch cluster, distributed Kafka Connect workers, remote Flink TaskManagers, PostgreSQL-backed Iceberg catalog metadata, and MinIO as the shared object-store endpoint.
+
+Distributed benchmark targets:
+
+```bash
+bash scripts/benchmark/run_benchmark.sh single-1m
+bash deploy/distributed/siemctl.sh benchmark distributed-1m
+bash deploy/distributed/siemctl.sh benchmark distributed-3m
+```
+
 ## Demo Modes
 
 The Phase 4 demo runner supports staged modes so you do not need the full stack every time:

@@ -18,8 +18,6 @@
   "errors.log.include.messages": "true",
   "errors.deadletterqueue.topic.name": "siem.connect.dlq",
   "errors.deadletterqueue.context.headers.enable": "true",
-  "transforms": "route",
-  "transforms.route.type": "org.apache.kafka.connect.transforms.RegexRouter",
-  "transforms.route.regex": "^siem\\.alerts$",
-  "transforms.route.replacement": "siem-alerts"
+  "external.resource.usage": "ALIAS_INDEX",
+  "topic.to.external.resource.mapping": "siem.alerts:siem-alerts"
 }

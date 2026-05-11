@@ -1,0 +1,26 @@
+[INFO] Running distributed benchmark size: distributed-1m
+[INFO] Kafka broker is healthy
+[INFO] Elasticsearch is ready at http://100.76.241.30:19200
+[INFO] PostgreSQL is healthy
+[INFO] Kafka Connect is ready at http://100.123.190.84:18083/connectors
+[INFO] Flink REST API is ready at http://100.76.241.30:18081/overview
+[INFO] Preparing benchmark data for size 'distributed-1m' into /root/siem-pipeline/benchmark/generated/distributed-1m
+[INFO] Prepared benchmark data
+[INFO] Elasticsearch is ready at http://100.76.241.30:19200
+[INFO] Loading benchmark data into Elasticsearch benchmark indices
+[INFO] PostgreSQL is healthy
+[INFO] Loading benchmark data into PostgreSQL baseline tables
+[INFO] Elasticsearch is ready at http://100.76.241.30:19200
+[INFO] PostgreSQL is healthy
+Traceback (most recent call last):
+  File "/root/siem-pipeline/scripts/benchmark/benchmark_tool.py", line 1163, in <module>
+    main()
+  File "/root/siem-pipeline/scripts/benchmark/benchmark_tool.py", line 1159, in main
+    args.func(args)
+  File "/root/siem-pipeline/scripts/benchmark/benchmark_tool.py", line 1024, in benchmark_queries
+    run_pg_query(args.postgres_dsn, query, pg_connection)
+  File "/root/siem-pipeline/scripts/benchmark/benchmark_tool.py", line 997, in run_pg_query
+    cur.execute(sql_text, params)
+  File "/usr/lib/python3/dist-packages/psycopg/cursor.py", line 732, in execute
+    raise ex.with_traceback(None)
+psycopg.ProgrammingError: only '%s', '%b', '%t' are allowed as placeholders, got '%''

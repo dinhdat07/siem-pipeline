@@ -31,7 +31,7 @@ ensure_benchmark_dirs() {
 }
 
 wait_for_postgres() {
-  wait_for_container postgres "PostgreSQL" "$BENCHMARK_WAIT_TIMEOUT_SEC" "$BENCHMARK_WAIT_INTERVAL_SEC"
+  wait_for_container "${POSTGRES_CONTAINER:-postgres}" "PostgreSQL" "$BENCHMARK_WAIT_TIMEOUT_SEC" "$BENCHMARK_WAIT_INTERVAL_SEC"
 }
 
 wait_for_benchmark_elasticsearch() {
@@ -70,13 +70,83 @@ install_benchmark_es_indices() {
 }
 
 write_run_metadata() {
-  cat > "$BENCHMARK_RUN_DIR/metadata.json" <<META
-{
-  "run_id": "$BENCHMARK_RUN_ID",
-  "size": "$BENCHMARK_SIZE",
-  "generated_input_dir": "$BENCHMARK_INPUT_DIR",
-  "results_dir": "$BENCHMARK_RUN_DIR",
-  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  "$PYTHON_BIN" - <<'PY' > "$BENCHMARK_RUN_DIR/metadata.json"
+import json
+import os
+import shutil
+import subprocess
+from datetime import datetime, timezone
+
+def run(cmd):
+    try:
+        return subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        return ""
+
+disk = shutil.disk_usage(os.environ.get("BENCHMARK_DISK_PATH", "/"))
+payload = {
+    "hostname": run(["hostname"]),
+    "cpu_count": os.cpu_count(),
+    "memory": run(["free", "-h"]),
+    "disk_path": os.environ.get("BENCHMARK_DISK_PATH", "/"),
+    "disk_total_bytes": disk.total,
+    "disk_free_bytes": disk.free,
+    "docker": run(["docker", "--version"]),
 }
-META
+
+metadata = {
+    "run_id": os.environ["BENCHMARK_RUN_ID"],
+    "size": os.environ["BENCHMARK_SIZE"],
+    "generated_input_dir": os.environ["BENCHMARK_INPUT_DIR"],
+    "results_dir": os.environ["BENCHMARK_RUN_DIR"],
+    "cluster_mode": os.environ.get("SIEM_CLUSTER_MODE", "single-node"),
+    "hardware": payload,
+    "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+}
+
+topology = os.environ.get("BENCHMARK_TOPOLOGY")
+if topology:
+    metadata["benchmark_topology"] = topology
+
+node_count = os.environ.get("BENCHMARK_NODE_COUNT")
+if node_count:
+    try:
+        metadata["benchmark_node_count"] = int(node_count)
+    except ValueError:
+        metadata["benchmark_node_count"] = node_count
+
+target_nodes = os.environ.get("BENCHMARK_TARGET_NODES")
+if target_nodes:
+    metadata["benchmark_target_nodes"] = [item for item in target_nodes.split(",") if item]
+
+notes = os.environ.get("BENCHMARK_NOTES")
+if notes:
+    metadata["benchmark_notes"] = notes
+
+print(json.dumps(metadata, indent=2, sort_keys=False))
+PY
+}
+
+wait_for_benchmark_indices_ready() {
+  local indices="${1:-siem-benchmark-events-000001,siem-benchmark-alerts-000001}"
+  local timeout_sec="${2:-$BENCHMARK_WAIT_TIMEOUT_SEC}"
+  local interval_sec="${3:-$BENCHMARK_WAIT_INTERVAL_SEC}"
+  local elapsed=0
+
+  while true; do
+    if curl -fsS "$ELASTICSEARCH_URL/_cluster/health/$indices?wait_for_status=green&wait_for_no_relocating_shards=true&timeout=${interval_sec}s" \
+      | "$PYTHON_BIN" -c 'import json,sys; data=json.load(sys.stdin); ok=data.get("status")=="green" and data.get("relocating_shards", 1)==0; print("1" if ok else "0")' \
+      | grep -qx 1; then
+      log_info "Benchmark indices are green and stable"
+      return 0
+    fi
+
+    if [ "$elapsed" -ge "$timeout_sec" ]; then
+      log_error "benchmark indices did not become green within ${timeout_sec}s"
+      exit 1
+    fi
+
+    sleep "$interval_sec"
+    elapsed=$((elapsed + interval_sec))
+  done
 }

@@ -9,6 +9,7 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 ORIGINAL_KAFKA_SCAN_STARTUP_MODE="${KAFKA_SCAN_STARTUP_MODE:-}"
 load_repo_env "$REPO_ROOT"
+load_optional_env_file "$REPO_ROOT/configs/flink/detection-thresholds.env"
 if [ -n "$ORIGINAL_KAFKA_SCAN_STARTUP_MODE" ]; then
   export KAFKA_SCAN_STARTUP_MODE="$ORIGINAL_KAFKA_SCAN_STARTUP_MODE"
 fi
@@ -17,7 +18,7 @@ require_command curl
 PYTHON_BIN="$(resolve_python_bin)"
 
 JOBMANAGER_CONTAINER="${FLINK_JOBMANAGER_CONTAINER:-flink-jobmanager}"
-FLINK_UI_URL="${FLINK_UI_URL:-http://localhost:${FLINK_UI_PORT:-8081}/overview}"
+FLINK_UI_URL="${FLINK_UI_URL:-${FLINK_REST_URL:-http://localhost:${FLINK_UI_PORT:-8081}}/overview}"
 WAIT_TIMEOUT_SEC="${WAIT_TIMEOUT_SEC:-180}"
 WAIT_INTERVAL_SEC="${WAIT_INTERVAL_SEC:-3}"
 

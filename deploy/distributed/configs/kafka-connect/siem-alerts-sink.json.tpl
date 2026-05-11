@@ -1,0 +1,23 @@
+{
+  "connector.class": "io.confluent.connect.elasticsearch.ElasticsearchSinkConnector",
+  "tasks.max": "${CONNECT_ALERTS_TASKS_MAX:-2}",
+  "topics": "siem.alerts",
+  "connection.url": "${ELASTICSEARCH_CONNECT_URL}",
+  "key.ignore": "true",
+  "schema.ignore": "true",
+  "behavior.on.malformed.documents": "IGNORE",
+  "behavior.on.null.values": "IGNORE",
+  "write.method": "INSERT",
+  "max.in.flight.requests": "1",
+  "batch.size": "1000",
+  "max.buffered.records": "5000",
+  "linger.ms": "500",
+  "flush.synchronously": "false",
+  "errors.tolerance": "all",
+  "errors.log.enable": "true",
+  "errors.log.include.messages": "true",
+  "errors.deadletterqueue.topic.name": "siem.connect.dlq",
+  "errors.deadletterqueue.context.headers.enable": "true",
+  "external.resource.usage": "ALIAS_INDEX",
+  "topic.to.external.resource.mapping": "siem.alerts:siem-alerts"
+}

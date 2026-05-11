@@ -1,0 +1,339 @@
+services:
+  kafka:
+    restart: unless-stopped
+    image: ${KAFKA_IMAGE:-apache/kafka:4.1.2}
+    container_name: siem-kafka
+    hostname: ${SIEM_NODE_NAME}-kafka
+    profiles: ["kafka"]
+    ports:
+      - "${TAILSCALE_IP}:${KAFKA_BROKER_PORT:-19092}:9092"
+      - "${TAILSCALE_IP}:${KAFKA_CONTROLLER_PORT:-19093}:9093"
+    environment:
+      KAFKA_CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+      KAFKA_NODE_ID: ${KAFKA_NODE_ID}
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: ${KAFKA_CONTROLLER_QUORUM_VOTERS}
+      KAFKA_LISTENERS: BROKER://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: BROKER://${TAILSCALE_IP}:${KAFKA_BROKER_PORT:-19092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: BROKER:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: BROKER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_DEFAULT_REPLICATION_FACTOR: ${KAFKA_DEFAULT_REPLICATION_FACTOR:-3}
+      KAFKA_MIN_INSYNC_REPLICAS: ${KAFKA_MIN_INSYNC_REPLICAS:-2}
+      KAFKA_NUM_PARTITIONS: ${KAFKA_NUM_PARTITIONS:-12}
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_HEAP_OPTS: ${KAFKA_HEAP_OPTS:--Xms512m -Xmx512m}
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 45s
+
+  elasticsearch:
+    restart: unless-stopped
+    image: ${ELASTICSEARCH_IMAGE:-docker.elastic.co/elasticsearch/elasticsearch:8.17.3}
+    container_name: siem-elasticsearch
+    hostname: ${ELASTICSEARCH_NODE_NAME}
+    profiles: ["elasticsearch"]
+    mem_limit: ${ELASTICSEARCH_MEM_LIMIT:-3g}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    ports:
+      - "${TAILSCALE_IP}:${ELASTICSEARCH_HTTP_PORT:-19200}:9200"
+      - "${TAILSCALE_IP}:${ELASTICSEARCH_TRANSPORT_PORT:-19300}:9300"
+    environment:
+      cluster.name: ${ELASTICSEARCH_CLUSTER_NAME:-siem-es-distributed}
+      node.name: ${ELASTICSEARCH_NODE_NAME}
+      network.host: 0.0.0.0
+      http.publish_host: ${TAILSCALE_IP}
+      http.publish_port: ${ELASTICSEARCH_HTTP_PORT:-19200}
+      transport.publish_host: ${TAILSCALE_IP}
+      transport.publish_port: ${ELASTICSEARCH_TRANSPORT_PORT:-19300}
+      discovery.seed_hosts: ${ELASTICSEARCH_SEED_HOSTS}
+      cluster.initial_master_nodes: ${ELASTICSEARCH_INITIAL_MASTER_NODES}
+      xpack.security.enabled: "false"
+      bootstrap.memory_lock: "true"
+      ES_JAVA_OPTS: ${ELASTICSEARCH_JAVA_OPTS:--Xms1536m -Xmx1536m}
+      cluster.routing.allocation.disk.watermark.low: 30gb
+      cluster.routing.allocation.disk.watermark.high: 20gb
+      cluster.routing.allocation.disk.watermark.flood_stage: 10gb
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+      start_period: 45s
+
+  postgres:
+    restart: unless-stopped
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    container_name: siem-postgres
+    hostname: postgres
+    profiles: ["control"]
+    ports:
+      - "${TAILSCALE_IP}:${POSTGRES_PORT:-15432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-siem_benchmark}
+      POSTGRES_USER: ${POSTGRES_USER:-siem}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-siem}
+      ICEBERG_CATALOG_JDBC_USER: ${ICEBERG_CATALOG_JDBC_USER:-iceberg}
+      ICEBERG_CATALOG_JDBC_PASSWORD: ${ICEBERG_CATALOG_JDBC_PASSWORD:-iceberg}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-1GB}
+      - -c
+      - work_mem=${POSTGRES_WORK_MEM:-64MB}
+      - -c
+      - maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-512MB}
+      - -c
+      - temp_file_limit=${POSTGRES_TEMP_FILE_LIMIT:-20GB}
+      - -c
+      - log_temp_files=1048576
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../../benchmark/postgres/init/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./postgres-init/01_iceberg_catalog.sql:/docker-entrypoint-initdb.d/02_iceberg_catalog.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-siem} -d ${POSTGRES_DB:-siem_benchmark}"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+
+  minio:
+    restart: unless-stopped
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-04-22T22-12-26Z}
+    container_name: siem-minio
+    hostname: minio
+    profiles: ["control"]
+    ports:
+      - "${TAILSCALE_IP}:${MINIO_API_PORT:-19000}:9000"
+      - "${TAILSCALE_IP}:${MINIO_CONSOLE_PORT:-19001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password}
+      MINIO_REGION_NAME: ${MINIO_REGION:-us-east-1}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-04-16T18-13-26Z}
+    container_name: siem-minio-init
+    profiles: ["control"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: >-
+      /bin/sh -c "
+      until (/usr/bin/mc alias set local http://${TAILSCALE_IP}:${MINIO_API_PORT:-19000} ${MINIO_ROOT_USER:-admin} ${MINIO_ROOT_PASSWORD:-password}) do echo '...waiting for minio...' && sleep 1; done;
+      /usr/bin/mc mb --ignore-existing local/${MINIO_WAREHOUSE_BUCKET:-warehouse};
+      /usr/bin/mc mb --ignore-existing local/${MINIO_WAREHOUSE_BUCKET:-warehouse}/flink;
+      "
+
+  iceberg-rest:
+    restart: unless-stopped
+    build:
+      context: ../..
+      dockerfile: docker/iceberg-rest/Dockerfile
+      args:
+        ICEBERG_REST_BASE_IMAGE: ${ICEBERG_REST_BASE_IMAGE:-apache/iceberg-rest-fixture:1.10.1}
+        POSTGRES_JDBC_VERSION: ${POSTGRES_JDBC_VERSION:-42.7.7}
+    image: ${ICEBERG_REST_IMAGE:-siem/iceberg-rest-postgres:1.10.1}
+    container_name: siem-iceberg-rest
+    hostname: iceberg-rest
+    profiles: ["control"]
+    ports:
+      - "${TAILSCALE_IP}:${ICEBERG_REST_PORT:-18181}:8181"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      AWS_REGION: ${MINIO_REGION:-us-east-1}
+      CATALOG_WAREHOUSE: ${ICEBERG_WAREHOUSE:-s3://warehouse/}
+      CATALOG_CATALOG__IMPL: ${ICEBERG_CATALOG_IMPL:-org.apache.iceberg.jdbc.JdbcCatalog}
+      CATALOG_URI: ${ICEBERG_CATALOG_JDBC_URI}
+      CATALOG_JDBC_USER: ${ICEBERG_CATALOG_JDBC_USER:-iceberg}
+      CATALOG_JDBC_PASSWORD: ${ICEBERG_CATALOG_JDBC_PASSWORD:-iceberg}
+      CATALOG_JDBC_STRICT__MODE: ${ICEBERG_CATALOG_JDBC_STRICT_MODE:-true}
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: ${S3_ENDPOINT_INTERNAL:-http://100.76.241.30:19000}
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      CATALOG_S3_ACCESS__KEY__ID: ${MINIO_ROOT_USER:-admin}
+      CATALOG_S3_SECRET__ACCESS__KEY: ${MINIO_ROOT_PASSWORD:-password}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8181/v1/config"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 20s
+
+  flink-jobmanager:
+    restart: unless-stopped
+    build:
+      context: ../..
+      dockerfile: docker/flink/Dockerfile
+      args:
+        FLINK_BASE_IMAGE: ${FLINK_BASE_IMAGE:-flink:1.19.2-scala_2.12-java17}
+        FLINK_SQL_KAFKA_CONNECTOR_VERSION: ${FLINK_SQL_KAFKA_CONNECTOR_VERSION:-3.2.0-1.19}
+        ICEBERG_FLINK_RUNTIME_VERSION: ${ICEBERG_FLINK_RUNTIME_VERSION:-1.19}
+        ICEBERG_VERSION: ${ICEBERG_VERSION:-1.10.1}
+        HADOOP_VERSION: ${HADOOP_VERSION:-3.4.2}
+    container_name: siem-flink-jobmanager
+    hostname: flink-jobmanager
+    profiles: ["control"]
+    command: jobmanager
+    ports:
+      - "${TAILSCALE_IP}:${FLINK_UI_PORT:-18081}:${FLINK_UI_PORT:-18081}"
+      - "${TAILSCALE_IP}:${FLINK_JOBMANAGER_RPC_PORT:-16123}:${FLINK_JOBMANAGER_RPC_PORT:-16123}"
+      - "${TAILSCALE_IP}:${FLINK_BLOB_PORT:-16124}:${FLINK_BLOB_PORT:-16124}"
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: ${FLINK_JOBMANAGER_RPC_ADDRESS:-100.76.241.30}
+        jobmanager.rpc.port: ${FLINK_JOBMANAGER_RPC_PORT:-16123}
+        blob.server.port: ${FLINK_BLOB_PORT:-16124}
+        rest.address: 0.0.0.0
+        rest.bind-address: 0.0.0.0
+        rest.port: ${FLINK_UI_PORT:-18081}
+        jobmanager.memory.process.size: ${FLINK_JOBMANAGER_MEMORY:-768m}
+        taskmanager.numberOfTaskSlots: ${FLINK_TASK_SLOTS:-2}
+        parallelism.default: ${FLINK_PARALLELISM:-4}
+        state.checkpoints.dir: ${FLINK_CHECKPOINT_DIR:-s3://warehouse/flink/checkpoints}
+        state.savepoints.dir: ${FLINK_SAVEPOINT_DIR:-s3://warehouse/flink/savepoints}
+        s3.endpoint: ${S3_ENDPOINT_INTERNAL:-http://100.76.241.30:19000}
+        s3.path.style.access: true
+        s3.access-key: ${MINIO_ROOT_USER:-admin}
+        s3.secret-key: ${MINIO_ROOT_PASSWORD:-password}
+      AWS_REGION: ${MINIO_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-admin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-password}
+      S3_ENDPOINT: ${S3_ENDPOINT_INTERNAL:-http://100.76.241.30:19000}
+    volumes:
+      - ../../flink/sql:/opt/flink/sql
+      - ../../flink/usrlib:/opt/flink/usrlib
+
+  flink-taskmanager:
+    restart: unless-stopped
+    build:
+      context: ../..
+      dockerfile: docker/flink/Dockerfile
+      args:
+        FLINK_BASE_IMAGE: ${FLINK_BASE_IMAGE:-flink:1.19.2-scala_2.12-java17}
+        FLINK_SQL_KAFKA_CONNECTOR_VERSION: ${FLINK_SQL_KAFKA_CONNECTOR_VERSION:-3.2.0-1.19}
+        ICEBERG_FLINK_RUNTIME_VERSION: ${ICEBERG_FLINK_RUNTIME_VERSION:-1.19}
+        ICEBERG_VERSION: ${ICEBERG_VERSION:-1.10.1}
+        HADOOP_VERSION: ${HADOOP_VERSION:-3.4.2}
+    container_name: siem-flink-taskmanager
+    hostname: flink-taskmanager
+    profiles: ["flink-worker"]
+    command: taskmanager
+    ports:
+      - "${TAILSCALE_IP}:${FLINK_TASKMANAGER_DATA_PORT:-16121}:${FLINK_TASKMANAGER_DATA_PORT:-16121}"
+      - "${TAILSCALE_IP}:${FLINK_TASKMANAGER_RPC_PORT:-16122}:${FLINK_TASKMANAGER_RPC_PORT:-16122}"
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: ${FLINK_JOBMANAGER_RPC_ADDRESS:-100.76.241.30}
+        jobmanager.rpc.port: ${FLINK_JOBMANAGER_RPC_PORT:-16123}
+        taskmanager.host: ${FLINK_TASKMANAGER_HOST}
+        taskmanager.data.port: ${FLINK_TASKMANAGER_DATA_PORT:-16121}
+        taskmanager.rpc.port: ${FLINK_TASKMANAGER_RPC_PORT:-16122}
+        taskmanager.memory.process.size: ${FLINK_TASKMANAGER_MEMORY:-1536m}
+        taskmanager.numberOfTaskSlots: ${FLINK_TASK_SLOTS:-2}
+        parallelism.default: ${FLINK_PARALLELISM:-4}
+        state.checkpoints.dir: ${FLINK_CHECKPOINT_DIR:-s3://warehouse/flink/checkpoints}
+        state.savepoints.dir: ${FLINK_SAVEPOINT_DIR:-s3://warehouse/flink/savepoints}
+        s3.endpoint: ${S3_ENDPOINT_INTERNAL:-http://100.76.241.30:19000}
+        s3.path.style.access: true
+        s3.access-key: ${MINIO_ROOT_USER:-admin}
+        s3.secret-key: ${MINIO_ROOT_PASSWORD:-password}
+      AWS_REGION: ${MINIO_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-admin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-password}
+      S3_ENDPOINT: ${S3_ENDPOINT_INTERNAL:-http://100.76.241.30:19000}
+    volumes:
+      - ../../flink/sql:/opt/flink/sql
+      - ../../flink/usrlib:/opt/flink/usrlib
+
+  connect:
+    restart: unless-stopped
+    build:
+      context: ../..
+      dockerfile: docker/connect/Dockerfile
+    container_name: siem-connect
+    hostname: connect-${SIEM_NODE_NAME}
+    profiles: ["connect"]
+    ports:
+      - "${TAILSCALE_IP}:${KAFKA_CONNECT_PORT:-18083}:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS_INTERNAL}
+      CONNECT_GROUP_ID: siem-connect-distributed
+      CONNECT_CONFIG_STORAGE_TOPIC: connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: connect-status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_OFFSET_STORAGE_PARTITIONS: 12
+      CONNECT_STATUS_STORAGE_PARTITIONS: 12
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_INTERNAL_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_INTERNAL_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_INTERNAL_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_INTERNAL_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_REST_ADVERTISED_HOST_NAME: ${TAILSCALE_IP}
+      CONNECT_REST_PORT: 8083
+      CONNECT_REST_ADVERTISED_PORT: ${KAFKA_CONNECT_PORT:-18083}
+      CONNECT_PLUGIN_PATH: /usr/share/confluent-hub-components
+      CONNECT_LOG4J_ROOT_LOGLEVEL: INFO
+      CONNECT_LOG4J_LOGGERS: org.apache.kafka.connect.runtime.rest=WARN,org.reflections=ERROR
+      KAFKA_HEAP_OPTS: ${KAFKA_CONNECT_HEAP_OPTS:--Xms512m -Xmx512m}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8083/connectors >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 60s
+
+  kibana:
+    restart: unless-stopped
+    image: ${KIBANA_IMAGE:-docker.elastic.co/kibana/kibana:8.17.3}
+    container_name: siem-kibana
+    hostname: kibana
+    profiles: ["control"]
+    ports:
+      - "${TAILSCALE_IP}:${KIBANA_PORT:-15601}:5601"
+    environment:
+      ELASTICSEARCH_HOSTS: '["http://100.76.241.30:${ELASTICSEARCH_HTTP_PORT:-19200}","http://100.123.190.84:${ELASTICSEARCH_HTTP_PORT:-19200}","http://100.90.64.86:${ELASTICSEARCH_HTTP_PORT:-19200}"]'
+      SERVER_PUBLICBASEURL: http://${TAILSCALE_IP}:${KIBANA_PORT:-15601}
+
+volumes:
+  kafka_data:
+  elasticsearch_data:
+  postgres_data:
+  minio_data:

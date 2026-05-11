@@ -1,0 +1,60 @@
+[INFO] Running distributed benchmark size: distributed-1m
+[INFO] Kafka broker is healthy
+[INFO] Elasticsearch is ready at http://100.76.241.30:19200
+[INFO] PostgreSQL is healthy
+[INFO] Kafka Connect is ready at http://100.123.190.84:18083/connectors
+[INFO] Flink REST API is ready at http://100.76.241.30:18081/overview
+[INFO] Preparing benchmark data for size 'distributed-1m' into /root/siem-pipeline/benchmark/generated/distributed-1m
+[INFO] Prepared benchmark data
+[INFO] Elasticsearch is ready at http://100.76.241.30:19200
+[INFO] Loading benchmark data into Elasticsearch benchmark indices
+[INFO] PostgreSQL is healthy
+[INFO] Loading benchmark data into PostgreSQL baseline tables
+[INFO] Elasticsearch is ready at http://100.76.241.30:19200
+[INFO] PostgreSQL is healthy
+[INFO] Elasticsearch is ready at http://100.76.241.30:19200
+[INFO] PostgreSQL is healthy
+[INFO] Kafka broker is healthy
+[INFO] Elasticsearch is ready at http://100.76.241.30:19200
+[INFO] Kafka Connect is ready at http://100.123.190.84:18083/connectors
+[INFO] Flink REST API is ready at http://100.76.241.30:18081/overview
+[INFO] Kafka is ready in container 'siem-kafka'
+[INFO] Ensuring topic exists: zeek.conn
+WARNING: Due to limitations in metric names, topics with a period ('.') or underscore ('_') could collide. To avoid issues it is best to use either, but not both.
+[INFO] Ensuring topic exists: snort.alert
+WARNING: Due to limitations in metric names, topics with a period ('.') or underscore ('_') could collide. To avoid issues it is best to use either, but not both.
+[INFO] Ensuring topic exists: siem.alerts
+WARNING: Due to limitations in metric names, topics with a period ('.') or underscore ('_') could collide. To avoid issues it is best to use either, but not both.
+[INFO] Ensuring topic exists: connect-configs
+[INFO] Ensuring topic exists: connect-offsets
+[INFO] Ensuring topic exists: connect-status
+[INFO] Ensuring topic exists: siem.connect.dlq
+WARNING: Due to limitations in metric names, topics with a period ('.') or underscore ('_') could collide. To avoid issues it is best to use either, but not both.
+[INFO] Current topics:
+__consumer_offsets
+connect-configs
+connect-offsets
+connect-status
+siem.alerts
+siem.connect.dlq
+snort.alert
+zeek.conn
+[INFO] Elasticsearch is ready at http://100.76.241.30:19200
+[INFO] Installed index templates
+[INFO] Index already exists: siem-events-000001
+[INFO] Index already exists: siem-alerts-000001
+[INFO] Kafka Connect is ready at http://100.123.190.84:18083
+[INFO] Upserting connector: siem-events-sink
+[INFO] Upserting connector: siem-snort-events-sink
+[INFO] Upserting connector: siem-alerts-sink
+[INFO] Registered Kafka Connect Elasticsearch sinks
+[INFO] connector siem-events-sink is RUNNING
+[INFO] connector siem-snort-events-sink is RUNNING
+[INFO] connector siem-alerts-sink is RUNNING
+[INFO] Replaying normalized JSONL from /root/siem-pipeline/benchmark/generated/distributed-1m/events.zeek.jsonl into topic zeek.conn
+[INFO] Replaying normalized JSONL from /root/siem-pipeline/benchmark/generated/distributed-1m/events.snort.jsonl into topic snort.alert
+[INFO] Replaying normalized JSONL from /root/siem-pipeline/data/test/phase35/hot/zeek_conn_hot_smoke.jsonl into topic zeek.conn
+[INFO] Cancelling Flink job phase5-benchmark-protocol-anomaly (b4a568d19ab7ab9d6d71e946ba52b74a)
+[INFO] Recorded ingest and alert latency metrics in /root/siem-pipeline/benchmark/results/20260508T040414Z-esnative-rerun2-distributed-1m/ingest.json
+[INFO] Benchmark run complete. Results are in /root/siem-pipeline/benchmark/results/20260508T040414Z-esnative-rerun2-distributed-1m
+[INFO] Wrote /root/siem-pipeline/benchmark/results/20260508T040414Z-esnative-rerun2-distributed-1m/es-vs-postgres-showcase.md

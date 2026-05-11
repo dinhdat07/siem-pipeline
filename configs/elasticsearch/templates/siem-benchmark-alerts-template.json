@@ -4,14 +4,21 @@
     "settings": {
       "number_of_shards": 1,
       "number_of_replicas": 0,
-      "refresh_interval": "5s"
+      "refresh_interval": "5s",
+      "index.sort.field": ["benchmark.id", "@timestamp"],
+      "index.sort.order": ["asc", "desc"]
     },
     "mappings": {
       "dynamic": false,
       "date_detection": false,
       "properties": {
         "@timestamp": {"type": "date"},
-        "message": {"type": "text"},
+        "message": {
+          "type": "text",
+          "fields": {
+            "autocomplete": {"type": "search_as_you_type"}
+          }
+        },
         "benchmark": {
           "properties": {
             "id": {"type": "keyword"},

@@ -186,6 +186,6 @@ cancel_flink_job_by_name() {
   while IFS= read -r job_id; do
     [ -n "$job_id" ] || continue
     log_info "Cancelling Flink job $job_name ($job_id)"
-    curl -fsS -X POST "$flink_rest_url/jobs/$job_id/cancel" >/dev/null
+    curl -fsS -X PATCH "$flink_rest_url/jobs/$job_id?mode=cancel" >/dev/null
   done <<<"$job_ids"
 }

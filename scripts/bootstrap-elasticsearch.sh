@@ -59,6 +59,8 @@ put_json() {
 create_write_alias() {
   local alias_name="$1"
   local index_name="$2"
+  local shards="${ELASTICSEARCH_INDEX_SHARDS:-1}"
+  local replicas="${ELASTICSEARCH_INDEX_REPLICAS:-0}"
 
   if curl -fsS "$ELASTICSEARCH_URL/$index_name" >/dev/null 2>&1; then
     log_info "Index already exists: $index_name"
@@ -69,6 +71,10 @@ create_write_alias() {
     -H "Content-Type: application/json" \
     "$ELASTICSEARCH_URL/$index_name" \
     --data "{
+      \"settings\": {
+        \"number_of_shards\": $shards,
+        \"number_of_replicas\": $replicas
+      },
       \"aliases\": {
         \"$alias_name\": {
           \"is_write_index\": true
