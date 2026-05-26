@@ -30,7 +30,7 @@ data/
 
 Install dependencies:
 
-```powershell
+```bash
 pip install -r parser/requirements.txt
 ```
 
@@ -49,7 +49,7 @@ Important note:
 
 Zeek parsing lives in `parser/zeek_conn_parser.py` and can be run directly:
 
-```powershell
+```bash
 python parser/zeek_conn_parser.py --input data/raw/zeek/conn.log --output data/sample/conn-logs/zeek_conn_sample.jsonl --limit 10000
 ```
 
@@ -62,7 +62,7 @@ Output:
 
 Snort parsing logic lives in `parser/snort_alert_parser.py` and can be run directly:
 
-```powershell
+```bash
 python parser/snort_alert_parser.py --input-dir data/raw/snort-alert --output data/sample/snort-alerts/snort_alerts_sample.jsonl --limit 10000
 ```
 
@@ -75,13 +75,13 @@ Output:
 
 Replay Zeek raw logs into Kafka:
 
-```powershell
+```bash
 python parser/replay_to_kafka.py --input data/raw/zeek/conn.log --topic zeek.conn --bootstrap-servers localhost:9092 --limit 1000
 ```
 
 Replay Snort raw alerts into Kafka:
 
-```powershell
+```bash
 python parser/replay_snort_to_kafka.py --input-dir data/raw/snort-alert --topic snort.alert --bootstrap-servers localhost:9092 --limit 1000
 ```
 

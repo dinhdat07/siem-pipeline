@@ -1,58 +1,70 @@
-# 5-Phase Implementation Plan
+# Implementation Roadmap
 
-This roadmap keeps Kafka as the central event bus, keeps Flink focused on stream processing and alert generation, and treats Elasticsearch as the hot search layer.
+All five phases are complete. Kafka remains the central event bus throughout.
 
-## Risks And Dependency Notes
+## Phase Summary
 
-- Snort timestamps must be UTC-normalized before phase 1 dashboards and Elasticsearch time filtering are reliable.
-- Kafka Connect internal topics and DLQ topics must be created explicitly because topic auto-creation is disabled.
-- `siem.alerts` needs a stable schema in phase 1 so later Flink rules do not break indexing and dashboards.
-- The Elasticsearch sink must bootstrap aliases and templates before indexing starts, otherwise the connector can create the wrong concrete indices.
-- Phase 2 depends on phase 1 field stability. Iceberg should consume the same normalized Kafka payloads rather than a different storage-specific schema.
+| Phase | Status | Deliverable |
+|:-----:|:------:|-------------|
+| 1 | ✅ Done | Hot path: Kafka → Connect → Elasticsearch → Kibana |
+| 2 | ✅ Done | Cold path: Kafka → Flink → Iceberg → MinIO |
+| 3 | ✅ Done | Detections: 6 Flink SQL rule families |
+| 3.5 | ✅ Done | Smoke validation: 5-stage integration checks |
+| 4 | ✅ Done | Reproducibility: staged profiles, demo runner, bundled data |
+| 5 | ✅ Done | Benchmarks: Elasticsearch vs PostgreSQL comparison |
 
-## Phase 1
+## Phase 1 — Hot Path
 
-- Add Elasticsearch, Kibana, and Kafka Connect to the local stack.
-- Index normalized events from `zeek.conn` and `snort.alert` into `siem-events-*`.
-- Keep `siem.alerts` in Kafka and also index it into `siem-alerts-*`.
-- Add index templates, write aliases, connector bootstrap, and Kibana saved objects.
-- Keep the MVP simple: single-node services, basic mappings, current simple Flink rules.
+- Add Elasticsearch, Kibana, and Kafka Connect to the local stack
+- Index normalized events from `zeek.conn` and `snort.alert` into `siem-events-*`
+- Index `siem.alerts` into `siem-alerts-*`
+- Bootstrap index templates, write aliases, connector configs, and Kibana saved objects
 
-## Phase 2
+## Phase 2 — Cold Path
 
-Implemented in the current repo state:
+- Add MinIO and Iceberg REST catalog
+- Use Flink SQL + Iceberg connector to write normalized events into Parquet-backed tables
+- Partition by `event_date` and `event_dataset`
+- Keep the REST catalog boundary for future multi-node portability
 
-- Add MinIO and Iceberg as the cold path.
-- Use Flink SQL plus Iceberg connector to write normalized events from Kafka into Parquet-backed Iceberg tables.
-- Partition by event date and dataset.
-- Do not remove or bypass Kafka. The hot and cold paths both branch from Kafka.
-- Keep the REST-catalog boundary so local development can later move to a multi-node deployment shape.
+## Phase 3 — Detections
 
-## Phase 3
+- Six streaming detection families in Flink SQL:
+  - Port scan (HOP window, COUNT DISTINCT)
+  - Top talkers (TUMBLE window, SUM bytes)
+  - Possible exfiltration (HOP window, SUM source bytes)
+  - Repeated critical Snort alerts (HOP window, severity filter)
+  - Snort-Zeek correlation (interval JOIN on source IP)
+  - Protocol/service anomalies (HOP window, unknown service detection)
+- Event-time windows, watermarks, and source idleness timeout
+- All rule outputs on unified `siem.alerts` schema
 
-Implemented in the current repo state:
+## Phase 3.5 — Smoke Validation
 
-- Upgrade Flink from simple filtering to real SIEM detections.
-- Implement port scan, top talkers, possible exfiltration, repeated critical Snort alerts, Snort-plus-Zeek correlation, and service/protocol anomalies.
-- Keep all rule outputs on the same `siem.alerts` schema introduced in phase 1.
-- Use event-time windows, watermarks, and interval joins where they fit the detection logic.
+- 5-stage smoke test suite: infra, topics, hot path, cold path, detections
+- Bundled smoke datasets in `data/test/phase35/`
+- Scripts in `scripts/smoke/`
 
-## Phase 4
+## Phase 4 — Reproducibility
 
-Implemented in the current repo state:
+- Docker Compose profiles: `hot`, `cold`, `detect`, `benchmark`
+- Single demo entrypoint: `scripts/demo/run-demo.sh`
+- Staged modes: `hot-only`, `cold-only`, `detect-only`, `full`
+- Bundled normalized demo datasets (no local Python deps needed)
+- Conservative memory defaults in `.env.example`
 
-- Add a single demo runner at `scripts/demo/run-demo.sh`.
-- Support staged modes for `hot-only`, `cold-only`, `detect-only`, and `full`.
-- Add Compose profiles so the full stack is optional.
-- Expand `.env.example` with conservative memory defaults and demo-oriented toggles.
-- Add `docs/demo.md` plus an updated architecture diagram and deployment runbook.
+## Phase 5 — Benchmark Validation
 
-## Phase 5
+- PostgreSQL baseline behind optional `benchmark` Compose profile
+- Reproducible data sizing: `small`, `medium`, `large`, `single-1m`
+- Elasticsearch and PostgreSQL loaders
+- Query latency, concurrent throughput, ingest, and alert-latency benchmarks
+- Two suites: `baseline` (ES vs PG) and `showcase` (ES-specific investigation)
 
-Implemented in the current repo state:
+## Risks and Design Notes
 
-- Add a PostgreSQL benchmark baseline behind the optional `benchmark` Compose profile.
-- Add reproducible benchmark data preparation with `small`, `medium`, and `large` sizing.
-- Add benchmark loaders for Elasticsearch and PostgreSQL.
-- Add query, concurrent, ingest-throughput, and approximate alert-latency benchmark scripts.
-- Add benchmark documentation plus result templates under `benchmark/results/`.
+- Snort timestamps must be UTC-normalized for reliable Elasticsearch time filtering
+- Kafka Connect internal topics and DLQ topics are created explicitly (auto-create disabled)
+- `siem.alerts` uses a stable schema shared across all detection rules
+- Elasticsearch templates and aliases are bootstrapped before indexing starts to prevent incorrect field type inference
+- Source idleness timeout is enabled to ensure all rule families emit reliably during staged demos and smoke datasets

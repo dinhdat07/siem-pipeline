@@ -1,113 +1,111 @@
 # SIEM Pipeline
 
-This repository is a reproducible SIEM-style data engineering demo built around Kafka, Flink, Elasticsearch, Kibana, MinIO, and Apache Iceberg.
+<div align="center">
 
-Implemented phases:
+[![Apache Kafka](https://img.shields.io/badge/Kafka-4.1.2-231F20?style=for-the-badge&logo=apachekafka&logoColor=white)](https://kafka.apache.org/)
+[![Apache Flink](https://img.shields.io/badge/Flink-1.19.2-E6526F?style=for-the-badge&logo=apacheflink&logoColor=white)](https://flink.apache.org/)
+[![Elasticsearch](https://img.shields.io/badge/Elasticsearch-8.17.3-00BFB3?style=for-the-badge&logo=elasticsearch&logoColor=white)](https://www.elastic.co/elasticsearch/)
+[![Kibana](https://img.shields.io/badge/Kibana-8.17.3-EC407A?style=for-the-badge&logo=kibana&logoColor=white)](https://www.elastic.co/kibana/)
+[![Apache Iceberg](https://img.shields.io/badge/Iceberg-1.10.1-3A7BEC?style=for-the-badge&logo=apache&logoColor=white)](https://iceberg.apache.org/)
+[![MinIO](https://img.shields.io/badge/MinIO-S3--Compatible-CF2E2E?style=for-the-badge&logo=minio&logoColor=white)](https://min.io/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
-- Phase 1 hot path: `Kafka -> Kafka Connect -> Elasticsearch -> Kibana`
-- Phase 2 cold path: `Kafka -> Flink SQL -> Iceberg -> MinIO`
-- Phase 3 detections: `Kafka -> Flink SQL -> siem.alerts`
-- Phase 3.5 smoke validation: staged infrastructure and pipeline checks
-- Phase 4 reproducibility: staged compose profiles, a single demo runner, and server-friendly runbooks
-- Phase 5 benchmark validation: Elasticsearch hot-path and PostgreSQL baseline benchmarking
+</div>
 
-Kafka remains the central event bus for ingest, storage, and alerting.
+---
 
-More detail lives in `docs/architecture.md`, `docs/benchmark.md`, `docs/demo.md`, `docs/cold-path.md`, `docs/flink-detections.md`, `docs/phase1-hot-path.md`, `docs/roadmap.md`, and `docs/validation-smoke-tests.md`.
+A reproducible, multi-phase SIEM-style data engineering demo built around a Kafka event bus with hot-path search, cold-path lake storage, and streaming detection logic — all orchestrated via Docker Compose.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Ingest["Ingest Layer"]
+        ZEEK["🔵 Zeek Conn Logs"] --> ZP["Python Parser"]
+        SNORT["🔴 Snort Alerts"] --> SP["Python Parser"]
+        ZP --> |"zeek.conn"| KAFKA
+        SP --> |"snort.alert"| KAFKA
+    end
+
+    subgraph Bus["Event Bus"]
+        KAFKA[("Apache Kafka")]
+    end
+
+    subgraph Hot["Hot Path — Real-time Search"]
+        KC["Kafka Connect"]
+        ES[("Elasticsearch")]
+        KI["Kibana"]
+        KAFKA --> |"sink connectors"| KC
+        KC --> |"siem-events-*"| ES
+        KC --> |"siem-alerts-*"| ES
+        ES --> KI
+    end
+
+    subgraph Cold["Cold Path — Lake Storage"]
+        FLINK_COLD["Flink SQL"]
+        ICE[("Iceberg REST Catalog")]
+        MINIO[("MinIO S3")]
+        KAFKA --> |"streaming read"| FLINK_COLD
+        FLINK_COLD --> |"INSERT INTO"| ICE
+        ICE --> |"Parquet"| MINIO
+    end
+
+    subgraph Detect["Detection Path — Streaming Rules"]
+        FLINK_DET["Flink SQL"]
+        ALERTS[("siem.alerts")]
+        KAFKA --> |"event-time windows"| FLINK_DET
+        FLINK_DET --> |"detection results"| ALERTS
+        ALERTS --> KAFKA
+    end
+
+    ZEEK -.-> |"normalized JSONL replay"| KAFKA
+    SNORT -.-> |"normalized JSONL replay"| KAFKA
+
+    style KAFKA fill:#231F20,color:#fff
+    style ES fill:#00BFB3,color:#000
+    style MINIO fill:#CF2E2E,color:#fff
+    style ICE fill:#3A7BEC,color:#fff
+```
+
+## Implemented Phases
+
+| Phase | Name | Path | Key Technologies |
+|:-----:|------|------|------------------|
+| 1 | **Hot Path** | `Kafka → Connect → Elasticsearch → Kibana` | Kafka Connect, Elasticsearch, Kibana saved objects |
+| 2 | **Cold Path** | `Kafka → Flink → Iceberg → MinIO` | Flink SQL, Apache Iceberg REST catalog, S3-compatible MinIO |
+| 3 | **Detections** | `Kafka → Flink SQL → siem.alerts` | Event-time windows, watermarks, interval joins, 6 rule families |
+| 3.5 | **Validation** | Staged smoke tests | Infrastructure checks, topic verification, pipeline assertions |
+| 4 | **Reproducibility** | Staged profiles + demo runner | Compose profiles, `run-demo.sh`, bundled datasets |
+| 5 | **Benchmarks** | Elasticsearch vs PostgreSQL | Bulk ingest, query latency, concurrent throughput, alert latency |
 
 ## Quick Start
 
-For a fresh server or VM, the fastest end-to-end demo flow is:
-
 ```bash
+# 1. Clone and configure
 cp .env.example .env
+
+# 2. Run the full demo (hot path + cold path + detections)
 bash scripts/demo/run-demo.sh full
 ```
 
-That command:
+That single command boots the stack, creates Kafka topics, bootstraps Elasticsearch templates and Connect sinks, initializes the Iceberg catalog, launches Flink jobs, replays sample data, and prints verification URLs.
 
-- starts the required Docker Compose services
-- creates Kafka topics
-- bootstraps Elasticsearch templates and Kafka Connect sinks
-- bootstraps the Iceberg catalog and table
-- starts the cold-path and detection Flink jobs
-- replays a small bundled normalized dataset
-- prints follow-up verification commands
-
-The demo flow does not require local Python parser dependencies because it replays bundled normalized JSONL files through Kafka.
-
-## Benchmark Quick Start
-
-Phase 5 adds a PostgreSQL comparison baseline and benchmark scripts that are separate from the normal demo flow.
-
-Small benchmark:
-
-```bash
-cp .env.example .env
-pip install -r benchmark/requirements.txt
-bash scripts/benchmark/run_benchmark.sh small
-```
-
-Larger benchmark sizes:
-
-```bash
-bash scripts/benchmark/run_benchmark.sh medium
-bash scripts/benchmark/run_benchmark.sh large
-```
-
-Low-resource mode for laptops or WSL:
-
-```bash
-BENCHMARK_LOW_RESOURCE=1 bash scripts/benchmark/run_benchmark.sh small
-```
-
-## Distributed Deployment
-
-This repo also includes a 3-node Tailscale deployment path for the current lab cluster:
-
-```bash
-bash deploy/distributed/siemctl.sh tune
-bash deploy/distributed/siemctl.sh up
-bash deploy/distributed/siemctl.sh bootstrap
-bash deploy/distributed/siemctl.sh validate
-```
-
-The distributed runbook is in `docs/distributed-deployment.md`. It uses Kafka RF=3, a 3-node Elasticsearch cluster, distributed Kafka Connect workers, remote Flink TaskManagers, PostgreSQL-backed Iceberg catalog metadata, and MinIO as the shared object-store endpoint.
-
-Distributed benchmark targets:
-
-```bash
-bash scripts/benchmark/run_benchmark.sh single-1m
-bash deploy/distributed/siemctl.sh benchmark distributed-1m
-bash deploy/distributed/siemctl.sh benchmark distributed-3m
-```
+**Minimum requirements:** 4 vCPU / 8 GB RAM. Recommended: 6 vCPU / 12 GB RAM.
 
 ## Demo Modes
 
-The Phase 4 demo runner supports staged modes so you do not need the full stack every time:
+Run only the layers you need:
 
-```bash
-bash scripts/demo/run-demo.sh hot-only
-bash scripts/demo/run-demo.sh cold-only
-bash scripts/demo/run-demo.sh detect-only
-bash scripts/demo/run-demo.sh full
-```
+| Command | Stack | Use Case |
+|---------|-------|----------|
+| `bash scripts/demo/run-demo.sh hot-only` | Kafka + ES + Kibana + Connect | Dashboard and search demos |
+| `bash scripts/demo/run-demo.sh cold-only` | Kafka + Flink + Iceberg + MinIO | Lake storage and Parquet inspection |
+| `bash scripts/demo/run-demo.sh detect-only` | Kafka + Flink | Detection rule development |
+| `bash scripts/demo/run-demo.sh full` | Everything | End-to-end pipeline showcase |
 
-Mode summary:
-
-- `hot-only`
-  - starts Kafka plus the hot path services (`Elasticsearch`, `Kibana`, `Kafka Connect`)
-  - replays a tiny event sample into `zeek.conn` and `snort.alert`
-- `cold-only`
-  - starts Kafka, Flink, MinIO, and the Iceberg REST catalog
-  - bootstraps the Iceberg table and writes a tiny sample into cold storage
-- `detect-only`
-  - starts Kafka and Flink only
-  - launches the advanced Phase 3 detections and replays a tiny detection dataset
-- `full`
-  - starts all services and exercises hot path, cold path, and detections together
-
-Optional strict validation:
+With strict smoke validation:
 
 ```bash
 DEMO_ENABLE_SMOKE_TESTS=1 bash scripts/demo/run-demo.sh full
@@ -115,177 +113,258 @@ DEMO_ENABLE_SMOKE_TESTS=1 bash scripts/demo/run-demo.sh full
 
 ## Docker Compose Profiles
 
-The Compose file now supports staged profiles:
-
-- `hot`
-  - `elasticsearch`, `kibana`, `connect`
-- `cold`
-  - `minio`, `minio-init`, `iceberg-rest`
-- `detect`
-  - `flink-jobmanager`, `flink-taskmanager`
-- `benchmark`
-  - `postgres`
-
-Examples:
+Services are grouped into staged profiles — start only what you need:
 
 ```bash
+# Hot path only
 COMPOSE_PROFILES=hot docker compose up -d --build
+
+# Cold path + detections
 COMPOSE_PROFILES=cold,detect docker compose up -d --build
-COMPOSE_PROFILES=hot,cold,detect docker compose up -d --build
-COMPOSE_PROFILES=hot,benchmark,detect docker compose up -d --build
+
+# Full stack + benchmark PostgreSQL
+COMPOSE_PROFILES=hot,cold,detect,benchmark docker compose up -d --build
 ```
 
-Kafka stays unprofiled because every mode depends on it.
+| Profile | Services |
+|---------|----------|
+| (none) | `kafka` — always started, every mode depends on it |
+| `hot` | `elasticsearch`, `kibana`, `connect` |
+| `cold` | `minio`, `minio-init`, `iceberg-rest` |
+| `detect` | `flink-jobmanager`, `flink-taskmanager` |
+| `benchmark` | `postgres` |
 
-## Recommended Server Specs
+## Detection Rules
 
-For reliable demos on a Linux server:
+Six streaming detection families, all implemented in Flink SQL with event-time semantics:
 
-- full demo
-  - minimum: `4 vCPU / 8 GB RAM`
-  - recommended: `6 vCPU / 12 GB RAM`
-- hot-only or detect-only
-  - minimum: `2 vCPU / 4 GB RAM`
-- cold-only
-  - minimum: `2 vCPU / 4-6 GB RAM`
+```mermaid
+flowchart LR
+    subgraph Inputs["Kafka Topics"]
+        ZC["zeek.conn"]
+        SA["snort.alert"]
+    end
 
-The defaults in `.env.example` intentionally keep JVM and Flink memory conservative for laptops and smaller VMs.
+    subgraph Rules["Flink SQL Detection Jobs"]
+        PS["Port Scan"]
+        TT["Top Talkers"]
+        EX["Exfiltration"]
+        RC["Repeated Critical Snort"]
+        CR["Snort-Zeek Correlation"]
+        PA["Protocol Anomaly"]
+    end
 
-For Phase 5 benchmark runs:
+    subgraph Output["Alert Sink"]
+        AL["siem.alerts"]
+    end
 
-- minimum server target: `4 vCPU / 8 GB RAM`
-- recommended server target: `6 vCPU / 12 GB RAM`
-- large benchmark target: `8 vCPU / 16 GB RAM`
+    ZC --> PS
+    ZC --> TT
+    ZC --> EX
+    ZC --> CR
+    SA --> RC
+    SA --> CR
+    ZC --> PA
 
-Benchmark numbers collected on low-RAM WSL should be treated as approximate only.
+    PS --> AL
+    TT --> AL
+    EX --> AL
+    RC --> AL
+    CR --> AL
+    PA --> AL
 
-## Useful Commands
+    AL --> |"Kafka Connect"| ES2[("Elasticsearch")]
+    AL --> |"Cold archive"| FL2["Flink → Iceberg"]
+```
 
-Full demo:
+Thresholds are configurable via `configs/flink/detection-thresholds.env`.
+
+## Benchmarking
+
+Phase 5 compares Elasticsearch against a PostgreSQL baseline for SIEM-style query workloads:
 
 ```bash
-bash scripts/demo/run-demo.sh full
+# Install benchmark dependency
+pip install -r benchmark/requirements.txt
+
+# Run small benchmark (~10K events)
+bash scripts/benchmark/run_benchmark.sh small
+
+# Medium (~100K) and large (~1M) scales
+bash scripts/benchmark/run_benchmark.sh medium
+bash scripts/benchmark/run_benchmark.sh large
+
+# Low-resource mode (laptops / WSL)
+BENCHMARK_LOW_RESOURCE=1 bash scripts/benchmark/run_benchmark.sh small
 ```
 
-Hot-only demo:
+Two benchmark suites:
+- **`baseline`** — ES vs PG comparison: filters, aggregations, text search
+- **`showcase`** — Elasticsearch-specific: multi-field search, faceting, timelines, pivot workflows
+
+Benchmark results are written to `benchmark/results/<run-id>/`. See `docs/benchmark.md` for methodology.
+
+## Distributed Deployment
+
+A 3-node Tailscale cluster deployment is included for the lab cluster (`dvm-sgp-01`, `dvm-sgp-02`, `dvm-sgp-03`):
 
 ```bash
-bash scripts/demo/run-demo.sh hot-only
+bash deploy/distributed/siemctl.sh sync      # sync repo to all nodes
+bash deploy/distributed/siemctl.sh tune       # kernel + Docker tuning
+bash deploy/distributed/siemctl.sh up         # start the distributed stack
+bash deploy/distributed/siemctl.sh bootstrap  # topics, templates, connectors, Iceberg
+bash deploy/distributed/siemctl.sh validate   # end-to-end health checks
+bash deploy/distributed/siemctl.sh benchmark distributed-1m  # run 1M benchmark
 ```
 
-Strict smoke validation without the full demo runner:
+Features: Kafka RF=3, 3-node Elasticsearch, distributed Connect workers, remote Flink TaskManagers, PostgreSQL-backed Iceberg catalog, MinIO shared object storage, S3-backed Flink checkpoints.
 
-```bash
-bash scripts/smoke/run_smoke_tests.sh infra
-bash scripts/smoke/run_smoke_tests.sh hot
-bash scripts/smoke/run_smoke_tests.sh cold
-bash scripts/smoke/run_smoke_tests.sh detect
-```
-
-Benchmark helpers:
-
-```bash
-bash scripts/benchmark/prepare_benchmark_data.sh small
-bash scripts/benchmark/load_elasticsearch.sh small
-bash scripts/benchmark/load_postgres.sh small
-bash scripts/benchmark/benchmark_queries_elasticsearch.sh small
-bash scripts/benchmark/benchmark_queries_postgres.sh small
-bash scripts/benchmark/benchmark_concurrent.sh small
-bash scripts/benchmark/benchmark_ingest.sh small
-```
-
-Stop the stack:
-
-```bash
-docker compose down
-```
-
-Reset the stack and volumes before a clean rerun:
-
-```bash
-DEMO_RESET_STACK=1 DEMO_RESET_VOLUMES=1 bash scripts/demo/run-demo.sh full
-```
-
-## Replaying Raw Logs Instead Of Bundled Demo Data
-
-The bundled demo uses normalized JSONL files so it stays lightweight and reproducible.
-
-If you want to replay raw MACCDC-style data through the Python parsers, install parser dependencies first:
-
-```bash
-pip install -r parser/requirements.txt
-```
-
-Examples:
-
-```bash
-python3 parser/replay_to_kafka.py --input data/raw/zeek/conn.log --topic zeek.conn --bootstrap-servers localhost:9092 --limit 1000 --interval-ms 50
-python3 parser/replay_snort_to_kafka.py --input-dir data/raw/snort-alert --topic snort.alert --bootstrap-servers localhost:9092 --limit 1000 --interval-ms 50
-```
+Full runbook: `docs/distributed-deployment.md`.
 
 ## Repository Layout
 
 ```text
 .
-|-- benchmark/
-|-- configs/
-|   |-- elasticsearch/
-|   |-- flink/
-|   |-- kafka/
-|   |-- kafka-connect/
-|   `-- trino/
-|-- dashboards/
-|-- data/
-|   |-- sample/
-|   `-- test/
-|-- docker/
-|   |-- connect/
-|   `-- flink/
-|-- docs/
-|-- flink/
-|   |-- sql/
-|   |   |-- cold-path/
-|   |   |-- demo/
-|   |   |-- detections/
-|   |   `-- smoke/
-|   `-- usrlib/
-|-- parser/
-|-- scripts/
-|   |-- benchmark/
-|   |-- demo/
-|   |-- smoke/
-|   `-- *.sh
-|-- Makefile
-|-- .env.example
-`-- docker-compose.yml
+├── benchmark/
+│   ├── postgres/init/           # PostgreSQL schema for benchmark baseline
+│   ├── requirements.txt         # psycopg for benchmark tooling
+│   └── results/                 # Benchmark run outputs (summary + showcase)
+├── configs/
+│   ├── elasticsearch/templates/ # Index templates for events, alerts, benchmarks
+│   ├── flink/                   # Detection threshold env vars
+│   ├── kafka/                   # Topic definitions (single-node)
+│   ├── kafka-connect/           # ES sink connector configs
+│   └── trino/                   # Future Trino catalog (example only)
+├── dashboards/                  # Kibana saved objects (NDJSON export)
+├── data/
+│   ├── sample/                  # Bundled demo datasets (normalized JSONL)
+│   └── test/                    # Smoke test fixtures (phase3, phase35)
+├── deploy/distributed/          # 3-node Tailscale cluster deployment
+│   ├── docker-compose.yml       # Multi-node Compose (Kafka, ES, Flink, MinIO, PG)
+│   ├── siemctl.sh              # Cluster control entrypoint
+│   ├── configs/                 # Distributed topic + connector configs
+│   ├── env/                     # Per-node environment files
+│   ├── postgres-init/           # Iceberg catalog schema for PostgreSQL
+│   └── scripts/                 # Host tuning
+├── docker/
+│   ├── connect/Dockerfile       # Kafka Connect + ES sink connector
+│   ├── flink/Dockerfile         # Flink + Kafka + Iceberg + Hadoop JARs
+│   └── iceberg-rest/Dockerfile  # Iceberg REST catalog + PostgreSQL JDBC
+├── docs/                        # Full documentation (see index below)
+├── flink/
+│   ├── sql/                     # Flink SQL modules
+│   │   ├── cold-path/           # Iceberg catalog + table + streaming insert
+│   │   ├── detections/          # 6 detection rule families
+│   │   ├── demo/               # Named job descriptors per demo rule
+│   │   ├── smoke/              # Smoke test job wrappers
+│   │   └── benchmark/          # Latency-measurement job name
+│   └── usrlib/                  # Flink JARs (kafka connector)
+├── parser/                      # Python parsers: Zeek conn + Snort alert → ECS JSON
+├── scripts/
+│   ├── benchmark/               # Benchmark data prep, load, query, concurrency
+│   ├── demo/                    # run-demo.sh, demo.sh, run_distributed_demo.sh
+│   ├── lib/                     # Shared shell helpers
+│   └── smoke/                   # 5-stage smoke test suite + runner
+├── .env.example                 # Central configuration template
+├── docker-compose.yml           # Single-node stack (4 profiles)
+└── Makefile                     # Convenience targets
 ```
 
-## Verification Shortcuts
+## Documentation
 
-After the full demo:
+| Document | Topic |
+|----------|-------|
+| [`docs/architecture.md`](docs/architecture.md) | Full architecture, service roles, design rationale |
+| [`docs/demo.md`](docs/demo.md) | Demo runner usage, modes, validation checklist |
+| [`docs/phase1-hot-path.md`](docs/phase1-hot-path.md) | Hot path: Kafka → Connect → ES → Kibana |
+| [`docs/cold-path.md`](docs/cold-path.md) | Cold path: Flink → Iceberg → MinIO |
+| [`docs/flink-detections.md`](docs/flink-detections.md) | Detection rules: windows, watermarks, joins |
+| [`docs/benchmark.md`](docs/benchmark.md) | Benchmark methodology and result interpretation |
+| [`docs/distributed-deployment.md`](docs/distributed-deployment.md) | 3-node Tailscale cluster runbook |
+| [`docs/validation-smoke-tests.md`](docs/validation-smoke-tests.md) | Smoke test stages and assertions |
+| [`docs/roadmap.md`](docs/roadmap.md) | Phase-by-phase implementation plan |
+| [`docs/sample-data.md`](docs/sample-data.md) | Sample data format and generation |
+| [`docs/references.md`](docs/references.md) | Full references: official docs → repo implementation |
+| [`docs/references-slide.md`](docs/references-slide.md) | Condensed reference list for presentation slides |
+| [`docs/siem_alert_schema.md`](docs/siem_alert_schema.md) | SIEM alert schema (ECS-normalized) |
+| [`docs/snort_alert_schema.md`](docs/snort_alert_schema.md) | Snort alert field mapping |
+| [`docs/zeek_conn_schema.md`](docs/zeek_conn_schema.md) | Zeek conn field mapping |
+
+## Verification Commands
+
+After running a demo, use these to confirm the pipeline is healthy:
 
 ```bash
+# Elasticsearch document counts
 curl http://localhost:9200/siem-events/_count
 curl http://localhost:9200/siem-alerts/_count
-bash scripts/verify-cold-path.sh
-bash scripts/verify-flink-detections.sh
+
+# Flink job overview
 curl http://localhost:8081/jobs/overview
+
+# Kafka Connect connectors
+curl http://localhost:8083/connectors
+
+# Cold path verification
+bash scripts/verify-cold-path.sh
+
+# Detection verification
+bash scripts/verify-flink-detections.sh
+
+# Iceberg REST catalog
+curl http://localhost:8181/v1/config
 ```
 
-Benchmark results are written to `benchmark/results/<run-id>/`.
+## Replaying Raw Logs
 
-## Current Scope
+The demo uses pre-parsed normalized JSONL. To replay raw MACCDC-format logs through the Python parsers:
 
-Included now:
+```bash
+pip install -r parser/requirements.txt
 
-- reproducible hot path, cold path, and detection demos
-- staged Docker Compose startup via profiles
-- smoke-test-based validation helpers
-- bundled small demo datasets for quick server validation
-- benchmark data preparation, Elasticsearch bulk loading, PostgreSQL baseline loading, query latency checks, and concurrent query benchmarks
+# Zeek conn logs
+python3 parser/replay_to_kafka.py \
+  --input data/raw/zeek/conn.log \
+  --topic zeek.conn \
+  --bootstrap-servers localhost:9092 \
+  --limit 1000 --interval-ms 50
 
-Not included yet:
+# Snort alert logs
+python3 parser/replay_snort_to_kafka.py \
+  --input-dir data/raw/snort-alert \
+  --topic snort.alert \
+  --bootstrap-servers localhost:9092 \
+  --limit 1000 --interval-ms 50
+```
 
-- production HA deployment manifests
-- Trino as an active Compose service
-- production-grade benchmark orchestration beyond the current scripts
+## Makefile Targets
+
+```bash
+make up               # Start the full stack
+make down             # Stop everything
+make demo             # Run full demo
+make demo-hot         # Hot-path only
+make demo-cold        # Cold-path only
+make demo-detect      # Detections only
+make smoke            # Full smoke test suite
+make benchmark-small  # Small benchmark run
+make logs             # Tail Compose logs
+```
+
+## Tech Stack Summary
+
+| Component | Version | Role |
+|-----------|---------|------|
+| Apache Kafka | 4.1.2 | Central event bus (KRaft mode) |
+| Apache Flink | 1.19.2 | Stream processing (SQL) |
+| Elasticsearch | 8.17.3 | Hot-path search and aggregation |
+| Kibana | 8.17.3 | Dashboards and investigation UI |
+| Apache Iceberg | 1.10.1 | Cold-path table format |
+| MinIO | RELEASE.2025-04 | S3-compatible object storage |
+| PostgreSQL | 17-alpine | Benchmark baseline + Iceberg catalog (distributed) |
+| Kafka Connect | 8.1.0 | Elasticsearch sink connectors |
+| Docker | Compose v2 | Container orchestration |
+
+## License
+
+MIT

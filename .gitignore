@@ -1,13 +1,22 @@
-data/raw/
-.venv/
+# Secrets and environment
 .env
-flink/sql/.generated/
-configs/kafka-connect/.generated/
+.venv/
+
+# Raw input data (large binaries)
+data/raw/
+
+# Generated / transient artifacts
+**/.generated/
 __pycache__/
 *.py[cod]
 
-# Benchmark artifacts generated per local run.
+# Benchmark artifacts generated per local run
 benchmark/generated/
 benchmark/results/*/
 !benchmark/results/README.md
 !benchmark/results/sample-summary.md
+!benchmark/results/es-scalability.md
+
+# Documents (keep only markdown)
+*.docx
+*.doc
